@@ -7,6 +7,13 @@
     "exa": {
       "type": "http",
       "url": "https://mcp.exa.ai/mcp"
+    },
+    "trigger": {
+      "args": [
+        "trigger.dev@4.5.16",
+        "mcp"
+      ],
+      "command": "npx"
     }
   }
 }

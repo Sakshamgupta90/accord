@@ -331,3 +331,11 @@ test('reconciliation redispatches intents that never reached the scheduler', asy
   assert.equal(deps.scheduler.dispatched.length, 1);
   assert.equal(DATASET, 'accord-demo-2026-09-12');
 });
+
+test('a failed interpretation with no decision in the thread posts nothing and is logged', async () => {
+  const deps = investigationDeps([new AccordError({ code: 'RATE_LIMIT', message: 'quota', retryable: true })]);
+  const { application } = await enrolAndProcess(deps, '@accord Show the last 5 commits.');
+  const view = await application.getThreadView(THREAD);
+  assert.equal(view.decision, null);
+  assert.equal(view.finding, null);
+});

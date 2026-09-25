@@ -75,3 +75,9 @@ in your handoff; Agent 1 applies them. Never create an alternative copy of anoth
 Every command that needs a real service names the missing configuration and exits nonzero rather
 than reporting a pass it has not earned. `tools/pending.mjs` is the helper for that, and any root
 script added for work that is not finished yet must use it instead of printing success.
+
+<!-- TRIGGER.DEV SKILLS START -->
+## Trigger.dev agent skills
+
+This project has Trigger.dev agent skills installed in `.agents/skills/`. Before writing or changing Trigger.dev code (background tasks, scheduled tasks, realtime, or chat.agent AI agents), load the most relevant skill: `trigger-authoring-chat-agent`.
+<!-- TRIGGER.DEV SKILLS END -->

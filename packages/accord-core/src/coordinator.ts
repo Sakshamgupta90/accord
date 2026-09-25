@@ -121,7 +121,15 @@ export async function processContext(deps: InvestigationDependencies, payload: P
 
   if (!outcome.ok || !outcome.interpretation) {
     // A refusal, an empty result or an invalid schema is an explicit error, never a fabricated decision.
-    await reportInterpretationFailure(deps, thread, current, outcome.error?.code ?? 'PROVIDER_ERROR');
+    const code = outcome.error?.code ?? 'PROVIDER_ERROR';
+    if (!current) {
+      // Nothing is tracked in this thread yet, so there is no finding to keep honest. Posting a
+      // "potential conflict" for what may be an ordinary question would be noise; log it instead.
+      deps.logger.error('interpretation_failed_no_decision', { threadId: thread.id, code });
+      await deps.store.markEventProcessed(payload.eventKey);
+      return;
+    }
+    await reportInterpretationFailure(deps, thread, current, code);
     await deps.store.markEventProcessed(payload.eventKey);
     return;
   }
