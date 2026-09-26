@@ -9,8 +9,9 @@ import { makeChannelAgent } from './agent.js';
 import { ConfirmationCard, EnrollmentCard, StatusCard } from './components.js';
 import type { ChannelAppConfig } from './config.js';
 import { normalizeInboundEvent, normalizeSlackMessage } from './normalize.js';
-import { createCodeTools } from './code-tools.js';
+import { createCodeTools, createRepositorySnapshot } from './code-tools.js';
 import { createGitHubTools } from './github-tools.js';
+import { createSuggestTools } from './suggest-tools.js';
 import { createChannelTools } from './tools.js';
 
 const SLACK_TS = /^\d+\.\d+$/;
@@ -54,15 +55,18 @@ function slackIdentifiers(
 }
 
 export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfig) {
+  const codeConfig = {
+    githubToken: config.github.token,
+    owner: config.github.owner,
+    name: config.github.name,
+    ref: config.github.ref,
+    knownSecretValues: config.knownSecretValues,
+  };
+  const repository = createRepositorySnapshot(codeConfig);
   const tools = [
     ...createChannelTools(app, { teamId: config.teamId, channelId: config.channelId }),
-    ...createCodeTools({
-      githubToken: config.github.token,
-      owner: config.github.owner,
-      name: config.github.name,
-      ref: config.github.ref,
-      knownSecretValues: config.knownSecretValues,
-    }),
+    ...createCodeTools(codeConfig, repository),
+    ...createSuggestTools(repository),
     ...createGitHubTools({
       githubToken: config.github.token,
       owner: config.github.owner,

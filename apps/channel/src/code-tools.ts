@@ -86,7 +86,15 @@ function extractTextFiles(gzipped: Buffer): Map<string, string> {
   return files;
 }
 
-export function createCodeTools(config: CodeToolConfig) {
+export interface RepositorySnapshot {
+  owner: string;
+  name: string;
+  /** Readable, redacted text files at the commit ACCORD_REPO_REF currently resolves to. */
+  load(): Promise<{ sha: string; files: Map<string, string> }>;
+}
+
+/** One cached, redacted copy of the repository, shared by every tool that reads code. */
+export function createRepositorySnapshot(config: CodeToolConfig): RepositorySnapshot {
   const repo = { owner: config.owner, name: config.name };
   const github = new LiveGitHubClient(config.githubToken);
   let checked: { sha: string; at: number } | null = null;
@@ -110,6 +118,13 @@ export function createCodeTools(config: CodeToolConfig) {
     })();
     return snapshot;
   }
+
+  return { owner: config.owner, name: config.name, load };
+}
+
+export function createCodeTools(config: CodeToolConfig, snapshot: RepositorySnapshot = createRepositorySnapshot(config)) {
+  const repo = { owner: config.owner, name: config.name };
+  const load = () => snapshot.load();
 
   const listFiles = defineChannelTool({
     name: 'list_repo_files',

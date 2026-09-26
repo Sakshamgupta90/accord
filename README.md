@@ -2,7 +2,7 @@
 
 Accord keeps a Slack policy decision connected to the code and synthetic data it changes. A team enrolls one thread by mentioning Accord; the configured owner confirms a narrowly supported retention decision; Accord investigates the fixed GitHub commit and calculates its current impact from a read-only ClickHouse view. Findings remain tied to the decision version and context revision until a proposed fix is verified at its PR head commit.
 
-In the same Slack thread, Accord can also answer questions about the configured GitHub repository: it reads and searches the code, and reads commits, issues and pull requests. All GitHub access is read-only.
+In the same Slack thread, Accord can also answer questions about the configured GitHub repository: it reads and searches the code, reads commits, issues and pull requests, and, when asked how to make a change, suggests up to three approaches ranked for this project. All GitHub access is read-only.
 
 This is deliberately a bounded MVP: one configured Slack workspace/channel, one GitHub repository, the synthetic `fixtures/retention-app/` policy fixture, and immediate retention changes for existing records. It does not delete records, execute fetched PR code, monitor all conversations, or prove a deployed fix.
 
@@ -269,6 +269,10 @@ Start with a new top-level message that @mentions the bot; follow up with plain 
 - `@Accord Where is the retention cleanup logic and what does it do?`
 - `@Accord Which files talk to ClickHouse?`
 - `@Accord Can you show me the .env file?` (refused by design)
+
+**Ranked change suggestions** (read-only; Accord posts a card with up to 3 approaches ranked by fit, risk, effort, testability and security, each citing the real files it would touch)
+- `@Accord I need to add rate limiting so a single Slack user can't spam Accord. How should we do it?`
+- `@Accord I need to make the retention period configurable per plan instead of hardcoded. Suggest the best ways to do it.`
 
 **GitHub activity**
 - `@Accord Who made the latest commit and what did it change?`
