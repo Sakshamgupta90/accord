@@ -15,6 +15,7 @@ import { attachedDocuments, downloadSlackDocuments, KnowledgeInputError, Knowled
 import { createKnowledgeTools } from './knowledge-tools.js';
 import { createSuggestTools } from './suggest-tools.js';
 import { createChannelTools } from './tools.js';
+import { createEmbeddingPort, SlackThreadKnowledgeService } from '@accord/store';
 
 const SLACK_TS = /^\d+\.\d+$/;
 
@@ -119,10 +120,17 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     channelId: config.channelId,
     sanitize: (text) => redact(text, config.knownSecretValues),
   });
+  const slackKnowledge = new SlackThreadKnowledgeService({
+    databaseUrl: config.databaseUrl,
+    teamId: config.teamId,
+    channelId: config.channelId,
+    embedding: createEmbeddingPort(config.embedding),
+    sanitize: (text) => redact(text, config.knownSecretValues),
+  });
   const tools = [
     ...createChannelTools(app, { teamId: config.teamId, channelId: config.channelId }),
     ...createCodeTools(codeConfig, repository),
-    ...createKnowledgeTools(knowledge),
+    ...createKnowledgeTools(knowledge, slackKnowledge),
     ...createSuggestTools(repository),
     ...createGitHubTools({
       githubToken: config.github.token,
@@ -174,6 +182,7 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
         messageTs,
         authorId,
         text: rawText,
+        isBot: authorId === config.botUserId,
         wasMention: true,
       },
       { teamId: config.teamId, channelId: config.channelId },
@@ -182,6 +191,11 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     if (!inbound) {
       return;
     }
+
+    // Indexing has its own durable queue and must never delay or alter the policy ingress path.
+    // A schema/provider outage leaves the core retention workflow intact; the worker will catch up
+    // after the queue is available again.
+    await enqueueSlackKnowledge(slackKnowledge, rootTs, inbound.message);
 
     const receipt = await app.acceptEvent(inbound);
     if (receipt.accepted) {
@@ -199,11 +213,6 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
 
   // Handle Enrolled Messages
   channel.onMessage(async ({ thread, message }) => {
-    const isSubscribed = await thread.isSubscribed();
-    if (!isSubscribed) {
-      return;
-    }
-
     const rawText = message.text ?? '';
     const ids = slackIdentifiers(thread, message);
     if (!ids) {
@@ -219,6 +228,7 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
         messageTs,
         authorId,
         text: rawText,
+        isBot: authorId === config.botUserId,
         wasMention: false,
       },
       { teamId: config.teamId, channelId: config.channelId },
@@ -228,6 +238,13 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
       return;
     }
 
+    // Every human message in the configured channel is eligible for the separate Slack knowledge
+    // graph, including messages in threads that were never enrolled as retention decisions.
+    await enqueueSlackKnowledge(slackKnowledge, rootTs, inbound.message);
+
+    const isSubscribed = await thread.isSubscribed();
+    if (!isSubscribed) return;
+
     const receipt = await app.acceptEvent(inbound);
     if (receipt.accepted) {
       const knowledgeUpload = !receipt.duplicate && await ingestRequestedKnowledge(knowledge, config, thread, message, { text: rawText, authorId, messageTs, rootTs });
@@ -235,5 +252,20 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     }
   });
 
-  return { channel, close: () => knowledge.close() };
+  return {
+    channel,
+    close: async () => {
+      await Promise.all([knowledge.close(), slackKnowledge.close()]);
+    },
+  };
+}
+
+async function enqueueSlackKnowledge(service: SlackThreadKnowledgeService, rootTs: string, message: Parameters<SlackThreadKnowledgeService['enqueue']>[1]): Promise<void> {
+  try {
+    await service.enqueue(rootTs, message);
+  } catch {
+    // Do not print a database error: it could include endpoint details. The queue can be repaired by
+    // applying migrations and replaying Slack history; the policy workflow remains authoritative.
+    console.warn('Slack semantic indexing queue is temporarily unavailable.');
+  }
 }

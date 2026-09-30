@@ -6,6 +6,7 @@ export { processContextTask } from './trigger/context.js';
 export { investigateTask } from './trigger/investigate.js';
 export { publishTask } from './trigger/publish.js';
 export { reconcileTask, RECONCILE_CRON } from './trigger/reconcile.js';
+export { slackThreadKnowledgeTask, SLACK_THREAD_KNOWLEDGE_CRON } from './trigger/slack-thread-knowledge.js';
 export {
   ingressDependencies, investigationDependencies, publishDependencies,
 } from './dependencies.js';

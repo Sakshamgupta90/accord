@@ -18,7 +18,8 @@ services:
       timeout: 3s
       retries: 20
   postgres:
-    image: postgres:17.4-alpine
+    # Includes the pgvector extension used by the durable Slack semantic graph.
+    image: pgvector/pgvector:0.8.6-pg17
     ports: ["5432:5432"]
     environment:
       POSTGRES_DB: accord
