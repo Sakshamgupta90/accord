@@ -12,6 +12,8 @@ export interface ChannelAppConfig {
   channelId: string;
   ownerUserId: string;
   databaseUrl: string;
+  botUserId: string | null;
+  embedding: { provider: 'google' | 'openai'; apiKey: string; model: string };
   github: { token: string; owner: string; name: string; ref: string };
   /** Configured credential values, redacted from any repository text the agent reads. */
   knownSecretValues: string[];
@@ -41,6 +43,13 @@ export function loadChannelConfig(env: Record<string, string | undefined> = proc
   const channelId = get('ACCORD_SLACK_CHANNEL_ID');
   const ownerUserId = get('ACCORD_OWNER_SLACK_USER_ID');
   const databaseUrl = get('DATABASE_URL');
+  const embeddingProvider = (env.ACCORD_EMBEDDING_PROVIDER ?? env.ACCORD_MODEL_PROVIDER ?? 'google').trim();
+  if (embeddingProvider !== 'google' && embeddingProvider !== 'openai') {
+    throw new AccordError(publicError('INVALID_INPUT', 'ACCORD_EMBEDDING_PROVIDER must be google or openai'));
+  }
+  const embeddingApiKey = get(embeddingProvider === 'google' ? 'GOOGLE_API_KEY' : 'OPENAI_API_KEY');
+  const embeddingModel = (env.ACCORD_EMBEDDING_MODEL?.trim()
+    || (embeddingProvider === 'google' ? 'gemini-embedding-001' : 'text-embedding-3-small'));
   const github = {
     token: get('GITHUB_TOKEN'),
     owner: get('ACCORD_GITHUB_OWNER'),
@@ -67,6 +76,8 @@ export function loadChannelConfig(env: Record<string, string | undefined> = proc
     channelId,
     ownerUserId,
     databaseUrl,
+    botUserId: env.ACCORD_BOT_USER_ID?.trim() || null,
+    embedding: { provider: embeddingProvider, apiKey: embeddingApiKey, model: embeddingModel },
     github,
     knownSecretValues: [
       intelligenceApiKey, slackBotToken, slackAppToken, github.token,

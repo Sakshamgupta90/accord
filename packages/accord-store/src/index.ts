@@ -17,6 +17,14 @@ export { publishJobKey } from './outbox.js';
 export { newInvestigationId } from './investigations.js';
 export { databaseError } from './client.js';
 export type { Database, Queryable } from './client.js';
+export {
+  createEmbeddingPort, embeddingConfigFromEnvironment, SlackThreadKnowledgeService,
+  SLACK_THREAD_EMBEDDING_DIMENSIONS,
+} from './slack-thread-knowledge.js';
+export type {
+  EmbeddingClientConfig, EmbeddingPort, EmbeddingProvider, SlackThreadKnowledgeConfig,
+  SlackThreadKnowledgeGraph, SlackThreadKnowledgeHit, SlackThreadKnowledgeScope,
+} from './slack-thread-knowledge.js';
 
 export function createStore(config: StoreConfig): StorePort {
   const db = createDatabase(config);
