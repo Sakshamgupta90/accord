@@ -220,6 +220,7 @@ export interface ApplicationPort {
   acceptAction(action: OwnerAction): Promise<ActionReceipt>;
   getThreadView(thread: ThreadRef): Promise<ThreadView>;
   recordPublicationReceipt(receipt: PublicationReceipt): Promise<void>;
+  triage?(input: { message: string }): Promise<TriageResult>;
 }
 export interface RepositoryPort {
   resolveTarget(input: { repository: RepositoryId; ref: string; pullRequestUrl: string | null; pathPrefix: string }): Promise<CommitTarget>;
@@ -259,8 +260,20 @@ export interface PrivacyPort {
 }
 export interface Account { id: string; plan: Plan; organizationType: OrganizationType; universityVerified: boolean }
 export interface RetainedRecord { id: string; accountId: string; createdAt: IsoTime }
+export interface TriageResult {
+  classification: 'irrelevant' | 'exploratory' | 'policy_proposed';
+  confidenceScore: number;
+  rationale: string;
+}
+
 export interface ModelPort {
   interpret(input: { messages: SlackMessage[]; current: Decision | null; ownerId: string; contextRevision: number }): Promise<Interpretation>;
+  triage(input: { message: string }): Promise<TriageResult>;
+}
+
+export interface ToolRegistryPort {
+  registerTool(name: string, schema: Record<string, unknown>, handler: (args: unknown) => Promise<unknown>): void;
+  executeTool(name: string, args: unknown): Promise<unknown>;
 }
 
 /** Only trusted own-bot transport events may create these receipts. */

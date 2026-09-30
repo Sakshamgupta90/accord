@@ -173,9 +173,14 @@ export function createApplication(deps: IngressDependencies): ApplicationPort {
       const receipt = validate(PublicationReceiptSchema, raw, 'PublicationReceipt');
       const outcome = await deps.store.recordPublicationReceipt(receipt);
       if (!outcome.recorded) {
-        // A receipt that does not match an existing publication is ignored, never trusted.
         deps.logger.info('publication_receipt_ignored', { publicationId: receipt.publicationId, reason: outcome.reason });
       }
     },
+    async triage(input: { message: string }): Promise<import('@accord/contracts').TriageResult> {
+      if (!deps.model.triage) {
+        throw new Error('Model port does not support triage');
+      }
+      return deps.model.triage(input);
+    }
   };
 }

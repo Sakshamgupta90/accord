@@ -30,6 +30,7 @@ export interface BaseDependencies {
 /** Ingress composition: accepting events and owner actions needs no model or provider access. */
 export interface IngressDependencies extends BaseDependencies {
   scheduler: JobSchedulerPort;
+  model: ModelPort; // Added for Triage
   /** The one configured decision owner. Never inferred from message text. */
   ownerId: string;
   /** Our own bot identity, so this app's findings can never re-trigger an investigation. */

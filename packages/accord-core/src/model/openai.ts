@@ -144,8 +144,6 @@ export function createOpenAIModel(config: ModelConfig, deps: ModelDependencies):
         return await call(input, null);
       } catch (error) {
         const shape = error instanceof AccordError ? error.public : null;
-        // Exactly one bounded repair, and only for a schema problem. The note carries the
-        // sanitized validation summary, never the provider response body.
         if (shape && shape.code === 'INVALID_INPUT') {
           deps.logger.info('model_schema_repair', { reason: shape.message });
           return await call(input, shape.message);
@@ -153,6 +151,52 @@ export function createOpenAIModel(config: ModelConfig, deps: ModelDependencies):
         throw error;
       }
     },
+    
+    async triage({ message }): Promise<import('@accord/contracts').TriageResult> {
+      const systemPrompt = `You are an autonomous engineering policy agent monitoring Slack.
+Determine if the following message proposes a concrete software policy, data retention rule, or architecture decision.
+Classify it as 'irrelevant', 'exploratory', or 'policy_proposed'. Output JSON.`;
+
+      const schema = {
+        type: 'object',
+        properties: {
+          classification: { type: 'string', enum: ['irrelevant', 'exploratory', 'policy_proposed'] },
+          confidenceScore: { type: 'number' },
+          rationale: { type: 'string' }
+        },
+        required: ['classification', 'confidenceScore', 'rationale'],
+        additionalProperties: false
+      };
+
+      if (config.provider === 'google') {
+        const completion = await client.chat.completions.create({
+          model: 'gemini-3.1-flash-lite', // Use a fast model for triage
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: deps.privacy.sanitize(message, 'slack') },
+          ],
+          max_tokens: 256,
+          response_format: { type: 'json_schema', json_schema: { name: 'triage', strict: true, schema } }
+        });
+        const choice = completion.choices[0];
+        if (choice?.message?.content) {
+          return JSON.parse(choice.message.content);
+        }
+      } else {
+        const completion = await client.responses.create({
+          model: 'gpt-4o-mini',
+          instructions: systemPrompt,
+          input: deps.privacy.sanitize(message, 'slack'),
+          max_output_tokens: 256,
+          text: { format: { type: 'json_schema', name: 'triage', strict: true, schema } }
+        });
+        const text = (completion as unknown as ResponseLike).output_text;
+        if (text) {
+          return JSON.parse(text);
+        }
+      }
+      throw new AccordError(publicError('PROVIDER_ERROR', 'Triage failed'));
+    }
   };
 }
 

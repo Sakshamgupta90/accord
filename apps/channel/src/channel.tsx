@@ -197,19 +197,30 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     }
   });
 
-  // Handle Enrolled Messages
+  // Handle Enrolled Messages and Autonomous Triage
   channel.onMessage(async ({ thread, message }) => {
-    const isSubscribed = await thread.isSubscribed();
-    if (!isSubscribed) {
-      return;
-    }
-
     const rawText = message.text ?? '';
     const ids = slackIdentifiers(thread, message);
     if (!ids) {
       return;
     }
     const { authorId, messageTs, rootTs } = ids;
+
+    const isSubscribed = await thread.isSubscribed();
+    if (!isSubscribed) {
+      // Autonomous Triage Step
+      try {
+        const result = await app.triage?.({ message: rawText });
+        if (result && result.classification === 'policy_proposed') {
+          await thread.subscribe();
+          await thread.post(EnrollmentCard());
+        } else {
+          return; // Ignore irrelevant messages
+        }
+      } catch (e) {
+        return; // Ignore if triage fails
+      }
+    }
 
     const inbound = normalizeInboundEvent(
       {

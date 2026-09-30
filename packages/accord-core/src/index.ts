@@ -46,12 +46,16 @@ export async function createConfiguredApplication(): Promise<ApplicationPort> {
     knownSecretValues: [config.slack.botToken, config.slack.appToken, config.model.apiKey, config.github.token, config.clickhouse.password],
   });
 
+  const logger = createSafeLogger({ component: 'ingress' });
+  const model = createOpenAIModel(config.model, { privacy, clock, logger });
+
   return createApplication({
     store,
     privacy,
     clock,
-    logger: createSafeLogger({ component: 'ingress' }),
+    logger,
     scheduler: createTriggerScheduler(),
+    model,
     ownerId: config.slack.ownerUserId,
     botUserId: botUserIdFromEnvironment(),
     repositoryTarget: {
