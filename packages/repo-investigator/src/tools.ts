@@ -155,12 +155,13 @@ export class ToolRegistry {
     }
 
     // 1. Fetch runtime files for trusted checksum checking
+    const prefix = this.ctx.target.pathPrefix.replace(/^\/+|\/+$/g, '');
     const pathsToCheck = params.runtimeFilePaths || [
-      `${this.ctx.target.pathPrefix}/src/policy-resolver.ts`,
-      `${this.ctx.target.pathPrefix}/src/cleanup.ts`,
-      `${this.ctx.target.pathPrefix}/scripts/generate.ts`,
-      `${this.ctx.target.pathPrefix}/src/display-policy.ts`,
-      `${this.ctx.target.pathPrefix}/src/index.ts`,
+      `${prefix}/src/policy-resolver.ts`,
+      `${prefix}/src/cleanup.ts`,
+      `${prefix}/scripts/generate.ts`,
+      `${prefix}/src/display-policy.ts`,
+      `${prefix}/src/index.ts`,
     ];
 
     const fetchedMap = new Map<string, string>();

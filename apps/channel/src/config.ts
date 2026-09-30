@@ -11,6 +11,9 @@ export interface ChannelAppConfig {
   teamId: string;
   channelId: string;
   ownerUserId: string;
+  github: { token: string; owner: string; name: string; ref: string };
+  /** Configured credential values, redacted from any repository text the agent reads. */
+  knownSecretValues: string[];
   port: number;
   mode: 'demo' | 'live';
   intelligenceApiUrl?: string;
@@ -36,6 +39,12 @@ export function loadChannelConfig(env: Record<string, string | undefined> = proc
   const teamId = get('ACCORD_SLACK_TEAM_ID');
   const channelId = get('ACCORD_SLACK_CHANNEL_ID');
   const ownerUserId = get('ACCORD_OWNER_SLACK_USER_ID');
+  const github = {
+    token: get('GITHUB_TOKEN'),
+    owner: get('ACCORD_GITHUB_OWNER'),
+    name: get('ACCORD_GITHUB_REPO'),
+    ref: get('ACCORD_REPO_REF'),
+  };
 
   if (missing.length > 0) {
     throw new AccordError(
@@ -55,6 +64,11 @@ export function loadChannelConfig(env: Record<string, string | undefined> = proc
     teamId,
     channelId,
     ownerUserId,
+    github,
+    knownSecretValues: [
+      intelligenceApiKey, slackBotToken, slackAppToken, github.token,
+      env.GOOGLE_API_KEY, env.OPENAI_API_KEY, env.CLICKHOUSE_PASSWORD, env.TRIGGER_SECRET_KEY,
+    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
     port: Number.isFinite(port) ? port : 3000,
     mode,
     intelligenceApiUrl: env.INTELLIGENCE_API_URL,

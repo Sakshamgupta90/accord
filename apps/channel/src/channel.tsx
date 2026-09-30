@@ -9,11 +9,70 @@ import { makeChannelAgent } from './agent.js';
 import { ConfirmationCard, EnrollmentCard, StatusCard } from './components.js';
 import type { ChannelAppConfig } from './config.js';
 import { normalizeInboundEvent, normalizeSlackMessage } from './normalize.js';
+import { createCodeTools, createRepositorySnapshot } from './code-tools.js';
+import { createGitHubTools } from './github-tools.js';
+import { createSuggestTools } from './suggest-tools.js';
 import { createChannelTools } from './tools.js';
 
+const SLACK_TS = /^\d+\.\d+$/;
+
+const RETENTION_TERMS = /\b(retain|retained|retaining|retention|purge|purging|deletion|delete|deleting|clean ?up|keep(?:ing)?\b.{0,40}\b(?:data|records?)|\d+\s*days?)\b/i;
+const LOOKUP_QUESTION = /^(?:@\S+\s+|<@[^>]+>\s*)*(?:where|what|what's|how|which|who|why|when|show|list|explain|find|summari[sz]e|describe|can you (?:show|explain|find|tell))\b/i;
+
+/**
+ * Whether a mention reads like a retention decision or proposal, so the enrollment card is shown
+ * only then. Presentation only: every mention is still enrolled and interpreted by the model, so
+ * a decision this heuristic misses is still investigated and its finding still posted.
+ */
+export function looksLikeRetentionDecision(text: string): boolean {
+  const trimmed = text.trim();
+  return RETENTION_TERMS.test(trimmed) && !LOOKUP_QUESTION.test(trimmed);
+}
+
+/**
+ * Real Slack identifiers for a Channels turn. The Slack adapter keys a conversation as
+ * `<channel>::<threadTs>`, reports the Slack user as `actor.id` (`user.id` is the canonical
+ * application id, not the Slack id) and the message ts as `operation.logicalMessageId`.
+ * Returns null rather than inventing a timestamp: a fabricated ts makes Slack post the
+ * finding at channel level instead of in the thread.
+ */
+function slackIdentifiers(
+  thread: { conversationKey: string },
+  message: unknown,
+): { authorId: string; messageTs: string; rootTs: string } | null {
+  const msg = message as {
+    actor?: { id?: string } | null;
+    operation?: { logicalMessageId?: string } | null;
+    ref?: { id?: string } | null;
+  };
+  const scope = thread.conversationKey.split('::')[1] ?? '';
+  const messageTs = [msg.operation?.logicalMessageId, msg.ref?.id].find((v) => typeof v === 'string' && SLACK_TS.test(v));
+  const authorId = msg.actor?.id;
+  if (!messageTs || !authorId) {
+    return null;
+  }
+  return { authorId, messageTs, rootTs: SLACK_TS.test(scope) ? scope : messageTs };
+}
+
 export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfig) {
+  const codeConfig = {
+    githubToken: config.github.token,
+    owner: config.github.owner,
+    name: config.github.name,
+    ref: config.github.ref,
+    knownSecretValues: config.knownSecretValues,
+  };
+  const repository = createRepositorySnapshot(codeConfig);
   const tools = [
     ...createChannelTools(app, { teamId: config.teamId, channelId: config.channelId }),
+    ...createCodeTools(codeConfig, repository),
+    ...createSuggestTools(repository),
+    ...createGitHubTools({
+      githubToken: config.github.token,
+      owner: config.github.owner,
+      name: config.github.name,
+      knownSecretValues: config.knownSecretValues,
+    }),
     ...defaultSlackTools,
   ];
 
@@ -44,12 +103,11 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
   // Handle Mentions (Enrolls thread)
   channel.onMention(async ({ thread, message }) => {
     const rawText = message.text ?? '';
-    const msgRecord = message as unknown as Record<string, unknown>;
-    const userObj = message.user as { id?: string } | null;
-    const authorId = userObj?.id ?? (typeof msgRecord.user === 'string' ? msgRecord.user : (msgRecord.authorId as string | undefined)) ?? 'unknown';
-    const messageTs = (typeof msgRecord.ts === 'string' ? msgRecord.ts : null) ?? String(Date.now() / 1000);
-    const threadRecord = thread as unknown as Record<string, unknown>;
-    const rootTs = (threadRecord.rootTs as string | undefined) ?? (threadRecord.threadId as string | undefined) ?? (threadRecord.id as string | undefined) ?? messageTs;
+    const ids = slackIdentifiers(thread, message);
+    if (!ids) {
+      return;
+    }
+    const { authorId, messageTs, rootTs } = ids;
 
     const inbound = normalizeInboundEvent(
       {
@@ -71,7 +129,11 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     const receipt = await app.acceptEvent(inbound);
     if (receipt.accepted) {
       await thread.subscribe();
-      await thread.post(EnrollmentCard());
+      if (looksLikeRetentionDecision(rawText)) {
+        await thread.post(EnrollmentCard());
+      }
+      // Answer the mention itself (e.g. a code question) instead of waiting for a thread reply.
+      await thread.runAgent();
     }
   });
 
@@ -83,12 +145,11 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     }
 
     const rawText = message.text ?? '';
-    const msgRecord = message as unknown as Record<string, unknown>;
-    const userObj = message.user as { id?: string } | null;
-    const authorId = userObj?.id ?? (typeof msgRecord.user === 'string' ? msgRecord.user : (msgRecord.authorId as string | undefined)) ?? 'unknown';
-    const messageTs = (typeof msgRecord.ts === 'string' ? msgRecord.ts : null) ?? String(Date.now() / 1000);
-    const threadRecord = thread as unknown as Record<string, unknown>;
-    const rootTs = (threadRecord.rootTs as string | undefined) ?? (threadRecord.threadId as string | undefined) ?? (threadRecord.id as string | undefined) ?? messageTs;
+    const ids = slackIdentifiers(thread, message);
+    if (!ids) {
+      return;
+    }
+    const { authorId, messageTs, rootTs } = ids;
 
     const inbound = normalizeInboundEvent(
       {

@@ -6,7 +6,7 @@ export type AccordMode = 'demo' | 'live';
 
 export interface AccordConfig {
   mode: AccordMode;
-  model: { apiKey: string; model: string; provider?: 'openai' | 'google' };
+  model: { apiKey: string; model: string; provider?: 'openai' | 'google'; reasoningEffort?: string };
   intelligence: { apiKey: string; channelCode: string };
   slack: { botToken: string; appToken: string; teamId: string; channelId: string; ownerUserId: string };
   github: { token: string; owner: string; name: string; ref: string; pathPrefix: string };
@@ -124,5 +124,7 @@ export function loadModelConfig(environment: NodeJS.ProcessEnv = process.env): A
     provider,
     apiKey: required(environment, provider === 'google' ? 'GOOGLE_API_KEY' : 'OPENAI_API_KEY'),
     model: required(environment, 'ACCORD_MODEL'),
+    // Optional. Unset keeps the provider default; `low` cuts Gemini interpretation from ~12s to ~2s.
+    ...(environment.ACCORD_MODEL_REASONING_EFFORT?.trim() ? { reasoningEffort: environment.ACCORD_MODEL_REASONING_EFFORT.trim() } : {}),
   };
 }

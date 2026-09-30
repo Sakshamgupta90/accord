@@ -15,3 +15,11 @@ apps/mobile/.expo/
 .data/
 artifacts/
 work/demo-branches/
+
+# Added by CopilotKit CLI: credential files, which must never be committed.
+.env
+.env.*
+!.env.example
+
+# Added by CopilotKit CLI: managed Channel setup credentials and artifacts.
+.copilotkit/artifacts/

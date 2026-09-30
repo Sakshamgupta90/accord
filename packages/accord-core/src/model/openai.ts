@@ -13,6 +13,7 @@ export interface ModelConfig {
   provider?: 'openai' | 'google';
   model: string;
   maxOutputTokens?: number;
+  reasoningEffort?: string;
   requestTimeoutMs?: number;
 }
 
@@ -79,6 +80,7 @@ export function createOpenAIModel(config: ModelConfig, deps: ModelDependencies):
             { role: 'user', content: input },
           ],
           max_tokens: config.maxOutputTokens ?? 8192,
+          ...(config.reasoningEffort ? { reasoning_effort: config.reasoningEffort as 'low' } : {}),
           response_format: { type: 'json_schema', json_schema: {
             name: 'interpretation', strict: true,
             schema: INTERPRETATION_JSON_SCHEMA as unknown as Record<string, unknown>,

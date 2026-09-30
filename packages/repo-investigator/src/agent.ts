@@ -303,6 +303,7 @@ Rules:
             messages,
             tools: TOOLS_SCHEMA,
             stream: false,
+            ...(process.env.ACCORD_MODEL_REASONING_EFFORT?.trim() ? { reasoning_effort: process.env.ACCORD_MODEL_REASONING_EFFORT.trim() } : {}),
           }),
         });
 
