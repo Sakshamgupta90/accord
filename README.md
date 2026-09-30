@@ -83,7 +83,7 @@ OpenAI works instead of Google if you prefer; see [Model configuration](#model-c
 #### 3a. Create the Slack app
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From an app manifest**, choose your workspace, and paste the contents of [`apps/channel/slack-app-manifest.json`](apps/channel/slack-app-manifest.json).
-2. **Install to Workspace**. Copy the **Bot User OAuth Token** (`xoxb-…`) → `SLACK_BOT_TOKEN`.
+2. **Install to Workspace**. Copy the **Bot User OAuth Token** (`xoxb-…`) → `SLACK_BOT_TOKEN`. The manifest includes `files:read` for deliberate knowledge-base uploads; if the app already exists, reinstall it after updating the manifest to grant that scope.
 3. **Basic Information → App-Level Tokens → Generate** with the `connections:write` scope. Copy it (`xapp-…`) → `SLACK_APP_TOKEN`.
 4. In Slack, create or pick a channel (e.g. `#general`) and invite the bot: `/invite @Accord`.
 5. Collect the IDs:
@@ -279,7 +279,21 @@ Start with a new top-level message that @mentions the bot; follow up with plain 
 - `@Accord Who last changed the authorization code?`
 - `@Accord What issues are open?` · `@Accord Are there any open pull requests?` · `@Accord Summarise PR #1.`
 
-Only the configured owner (`ACCORD_OWNER_SLACK_USER_ID`) can confirm a decision; the same message from anyone else is recorded as a candidate. Code and GitHub answers are exploration, not Accord findings.
+**Developer knowledge base** (separate from GitHub and retention evidence)
+- The configured owner attaches a `.txt`, `.md`, `.csv`, `.json`, `.xml`, or Word `.docx` file and writes: `@Accord add this to the knowledge base`.
+- `@Accord What do the legacy Delphi notes say about ownership?`
+- `@Accord Compare the documented Pascal migration rationale with the current resolver code.`
+- `@Accord What documents are available in the knowledge base?`
+
+Accord extracts and redacts text, stores only that text in PostgreSQL, and returns bounded results cited by document name and chunk number. It does not treat uploaded text as instructions, and uploaded knowledge never changes a retention decision or finding. Uploading is owner-only to prevent an arbitrary channel participant from poisoning the shared knowledge base.
+
+**Licence and cost scenarios** (separate structured PostgreSQL inventory)
+- `@Accord List active licences for Figma.`
+- `@Accord What would the recurring cost be if we removed the three licences you just listed?`
+
+An administrator or approved ETL loads `accord_license_inventory`; Slack can only list and estimate from those scoped rows. Accord never stores licence keys, cancels subscriptions, edits inventory, combines currencies, or invents contract/proration/tax assumptions.
+
+Only the configured owner (`ACCORD_OWNER_SLACK_USER_ID`) can confirm a decision; the same message from anyone else is recorded as a candidate. Code, GitHub, knowledge-base and licence answers are exploration, not Accord findings.
 
 ## Troubleshooting
 
@@ -318,6 +332,17 @@ Only the configured owner (`ACCORD_OWNER_SLACK_USER_ID`) can confirm a decision;
 | `npm run test:live` | Real provider checks, then the live end-to-end check |
 | `npm run demo:prepare-prs` | Prepare demo scenario branches (dry run unless `--apply-local`; pushes only with `--push`) |
 | `npm run review:evidence` | Sanitized evidence manifest |
+
+### Knowledge base and licence inventory
+
+Run `npm run db:migrate` after updating Accord to create the knowledge and inventory tables. Knowledge documents and commercial inventory are deliberately separate:
+
+| PostgreSQL table | Contents | Who writes it | What Slack can do |
+|---|---|---|---|
+| `accord_knowledge_documents` / `accord_knowledge_chunks` | Redacted extracted developer documentation, scoped to one team/channel | Configured owner through an explicit Slack attachment upload | List/search and cite excerpts |
+| `accord_license_inventory` | Vendor, product, SKU, seat count, cost, currency, renewal/status—never licence keys | Administrator or approved ETL | List inventory and estimate removal cost |
+
+The upload flow accepts text-based files and Word `.docx` up to 5 MiB. Unsupported formats, unreadable content, and oversized documents are rejected visibly; they are not silently indexed. Search is lexical and bounded, so it is transparent and does not require sending private documents to an embedding provider.
 
 ### Model configuration
 

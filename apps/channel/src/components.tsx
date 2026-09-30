@@ -29,6 +29,27 @@ export function EnrollmentCard() {
   );
 }
 
+export function KnowledgeUploadCard({ accepted, skipped }: { accepted: string[]; skipped: string[] }) {
+  return (
+    <Message accent={accepted.length > 0 ? '#36C5F0' : '#E01E5A'}>
+      <Header>Knowledge Base Upload</Header>
+      <Section>
+        <Markdown>
+          {accepted.length > 0
+            ? `Indexed ${accepted.length} document${accepted.length === 1 ? '' : 's'} for this channel: ${accepted.join(', ')}.`
+            : 'No document was indexed.'}
+        </Markdown>
+      </Section>
+      {skipped.length > 0 && (
+        <Section>
+          <Markdown>**Skipped:** {skipped.join(' · ')}</Markdown>
+        </Section>
+      )}
+      <Context>Only redacted extracted text is stored; uploads are reference material, not Accord policy evidence.</Context>
+    </Message>
+  );
+}
+
 export interface StatusCardProps {
   view: ThreadView;
 }

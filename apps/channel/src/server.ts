@@ -19,12 +19,12 @@ async function main() {
     wsUrl: config.intelligenceWsUrl,
   });
 
-  const channel = createSlackChannel(app, config);
+  const slackChannel = createSlackChannel(app, config);
 
   const runtime = new CopilotRuntime({
     agents: {},
     intelligence,
-    channels: [channel],
+    channels: [slackChannel.channel],
   });
 
   let teardown: (() => Promise<void>) | undefined;
@@ -51,6 +51,7 @@ async function main() {
 
   teardown = async () => {
     await channels.stop();
+    await slackChannel.close();
     if (server.listening) server.close();
   };
 
