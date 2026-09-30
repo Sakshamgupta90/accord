@@ -36,6 +36,17 @@ test('the schema carries the constraints the product depends on', () => {
   assert.ok(sql.includes('CREATE INDEX job_intents_pending_idx'), 'reconciliation needs a pending-intent index');
 });
 
+test('knowledge and licence facts stay in separate, scoped tables', () => {
+  const sql = readFileSync(join(MIGRATIONS, '002_knowledge_and_license_inventory.sql'), 'utf8');
+  for (const fragment of [
+    'CREATE TABLE accord_knowledge_documents',
+    'CONSTRAINT accord_knowledge_documents_scope_content_unique UNIQUE (team_id, channel_id, content_sha256)',
+    'CREATE TABLE accord_knowledge_chunks',
+    'CREATE TABLE accord_license_inventory',
+    'assigned_seats <= active_seats',
+  ]) assert.ok(sql.includes(fragment), `missing knowledge/licence schema guard: ${fragment}`);
+});
+
 test('database errors become bounded PublicErrors with no provider detail', () => {
   const unique = databaseError({ code: '23505', detail: 'Key (event_key)=(Ev123) already exists', message: 'duplicate' }, 'acceptEvent');
   assert.ok(unique instanceof AccordError);

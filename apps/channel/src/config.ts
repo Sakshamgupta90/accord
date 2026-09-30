@@ -11,6 +11,7 @@ export interface ChannelAppConfig {
   teamId: string;
   channelId: string;
   ownerUserId: string;
+  databaseUrl: string;
   github: { token: string; owner: string; name: string; ref: string };
   /** Configured credential values, redacted from any repository text the agent reads. */
   knownSecretValues: string[];
@@ -39,6 +40,7 @@ export function loadChannelConfig(env: Record<string, string | undefined> = proc
   const teamId = get('ACCORD_SLACK_TEAM_ID');
   const channelId = get('ACCORD_SLACK_CHANNEL_ID');
   const ownerUserId = get('ACCORD_OWNER_SLACK_USER_ID');
+  const databaseUrl = get('DATABASE_URL');
   const github = {
     token: get('GITHUB_TOKEN'),
     owner: get('ACCORD_GITHUB_OWNER'),
@@ -64,6 +66,7 @@ export function loadChannelConfig(env: Record<string, string | undefined> = proc
     teamId,
     channelId,
     ownerUserId,
+    databaseUrl,
     github,
     knownSecretValues: [
       intelligenceApiKey, slackBotToken, slackAppToken, github.token,
