@@ -9,7 +9,7 @@ import type {
   ThreadRef, ThreadView,
 } from '@accord/contracts';
 import type {
-  AcceptedEvent, CommitOutcome, DecisionDraft, DeliveryStatus, FindingDraft, InvestigationRow,
+  AcceptedEvent, AcceptEventOptions, CommitOutcome, DecisionDraft, DeliveryStatus, FindingDraft, InvestigationRow,
   InvestigationStatus, JobIntent, JobTaskType, OutboxRow, PublicationDraft, StorePort, ThreadRow,
 } from '@accord/store';
 
@@ -135,18 +135,20 @@ export function createFakeStore(): FakeStore {
       return state ? { ...state } : null;
     },
 
-    async acceptEvent(event: InboundEvent): Promise<AcceptedEvent> {
+    async acceptEvent(event: InboundEvent, options: AcceptEventOptions = {}): Promise<AcceptedEvent> {
       let state = findThread(event.thread);
+      let enrolled = false;
       if (!state || !state.enrolled) {
-        if (!event.wasMention) {
-          return { accepted: false, duplicate: false, reason: 'thread not enrolled', threadId: state?.id ?? null, contextRevision: state?.contextRevision ?? null, jobIntent: null };
+        if (!event.wasMention && !options.enroll) {
+          return { accepted: false, duplicate: false, enrolled: false, reason: 'thread not enrolled', threadId: state?.id ?? null, contextRevision: state?.contextRevision ?? null, jobIntent: null };
         }
         state = state ?? store.seedThread(event.thread, { enrolled: true, contextRevision: 0 }) as ThreadState;
         state = findThread(event.thread)!;
         state.enrolled = true;
+        enrolled = true;
       }
       if (state.events.has(event.eventKey)) {
-        return { accepted: true, duplicate: true, reason: 'duplicate event', threadId: state.id, contextRevision: state.contextRevision, jobIntent: null };
+        return { accepted: true, duplicate: true, enrolled: false, reason: 'duplicate event', threadId: state.id, contextRevision: state.contextRevision, jobIntent: null };
       }
       state.events.set(event.eventKey, event);
       state.contextRevision += 1;
@@ -158,7 +160,7 @@ export function createFakeStore(): FakeStore {
       const { intent } = enqueue(`context:${state.id}:${state.contextRevision}`, 'accord-process-context', {
         threadId: state.id, eventKey: event.eventKey, contextRevision: state.contextRevision,
       });
-      return { accepted: true, duplicate: false, reason: null, threadId: state.id, contextRevision: state.contextRevision, jobIntent: intent };
+      return { accepted: true, duplicate: false, enrolled, reason: null, threadId: state.id, contextRevision: state.contextRevision, jobIntent: intent };
     },
 
     async markEventProcessed(eventKey) {

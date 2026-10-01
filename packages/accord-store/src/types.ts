@@ -67,9 +67,16 @@ export interface OutboxRow {
   deliveredTs: string | null;
 }
 
+export interface AcceptEventOptions {
+  /** Enroll an unenrolled thread although the event is not a mention. Set only by triage. */
+  enroll?: boolean;
+}
+
 export interface AcceptedEvent {
   accepted: boolean;
   duplicate: boolean;
+  /** True only when this acceptance enrolled a previously unenrolled thread. */
+  enrolled: boolean;
   reason: string | null;
   threadId: Id | null;
   contextRevision: number | null;
@@ -129,7 +136,7 @@ export interface StorePort {
   getThreadRowById(threadId: Id): Promise<ThreadRow | null>;
 
   /** Durable acceptance: dedupe, enrollment, revision increment, job intent and fencing in one transaction. */
-  acceptEvent(event: InboundEvent): Promise<AcceptedEvent>;
+  acceptEvent(event: InboundEvent, options?: AcceptEventOptions): Promise<AcceptedEvent>;
   markEventProcessed(eventKey: string): Promise<void>;
   readEvent(eventKey: string): Promise<InboundEvent | null>;
 

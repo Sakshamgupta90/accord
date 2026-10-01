@@ -9,7 +9,7 @@ import type {
   ImpactReport, ImpactRequest, InboundEvent, IngestReceipt, Interpretation, OwnerAction, PolicyIntent,
   PublicError, Publication, PublicationReceipt, RepositoryId, RepositoryReport, RetainedRecord,
   RetentionProjection, RetentionRule, RunContext, Scope, SlackMessage, ThreadRef, ThreadView,
-  TraceEdge, VerificationReport,
+  TraceEdge, TriageResult, VerificationReport,
 } from './types.js';
 import { CONTRACT_VERSION } from './types.js';
 
@@ -362,6 +362,12 @@ export const PublicationReceiptSchema = z.strictObject({
   observedAt: IsoTimeSchema,
 }) satisfies z.ZodType<PublicationReceipt>;
 
+export const TriageResultSchema = z.strictObject({
+  classification: z.enum(['irrelevant', 'exploratory', 'policy_proposed']),
+  confidence: z.number().min(0).max(1),
+  rationale: text(LIMITS.noteText),
+}) satisfies z.ZodType<TriageResult>;
+
 export const AccountSchema = z.strictObject({
   id: KeySchema,
   plan: PlanSchema,
@@ -397,6 +403,7 @@ export const SCHEMAS = {
   RepositoryId: RepositoryIdSchema,
   RepositoryReport: RepositoryReportSchema,
   RetainedRecord: RetainedRecordSchema,
+  TriageResult: TriageResultSchema,
   RetentionProjection: RetentionProjectionSchema,
   RetentionRule: RetentionRuleSchema,
   RunContext: RunContextSchema,

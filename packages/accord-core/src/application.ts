@@ -1,16 +1,20 @@
 /** The ApplicationPort: the only entry Agent 2's bridge uses.
- * Ingress does no network or model work before durable acceptance.
+ * Ingress does no network or model work before durable acceptance. The one exception is the
+ * optional triage classifier, which runs only for a message in an unenrolled thread that has
+ * already passed the audience check and the zero-cost prefilter.
  */
 import {
-  InboundEventSchema, OwnerActionSchema, PublicationReceiptSchema, policyIntentHash, validate,
+  AccordError, InboundEventSchema, OwnerActionSchema, PublicationReceiptSchema, policyIntentHash, validate,
 } from '@accord/contracts';
 import type {
   ActionReceipt, ApplicationPort, Decision, DecisionStatus, InboundEvent, IngestReceipt, OwnerAction,
-  PublicationReceipt, SlackMessage, ThreadRef, ThreadView,
+  PublicationReceipt, SlackMessage, ThreadRef, ThreadView, TriageReceipt, TriageResult,
 } from '@accord/contracts';
+import type { AcceptEventOptions } from '@accord/store';
 import { isMaterialChange } from './authorization.js';
 import { composeFinding } from './finding.js';
 import { dispatchIntent, investigationJobKey } from './coordinator.js';
+import { mayProposeRetentionPolicy } from './triage.js';
 import { TASK_IDS } from './types.js';
 import type { IngressDependencies } from './types.js';
 
@@ -27,7 +31,8 @@ function sanitizeMessage(deps: IngressDependencies, message: SlackMessage): Slac
 export function createApplication(deps: IngressDependencies): ApplicationPort {
   const repository = { owner: deps.repositoryTarget.owner, name: deps.repositoryTarget.name };
 
-  async function acceptEvent(raw: InboundEvent): Promise<IngestReceipt> {
+  /** Shape, audience, own-bot and sanitization checks shared by every inbound path. */
+  function prepare(raw: InboundEvent): { event: InboundEvent } | { rejected: IngestReceipt } {
     const event = validate(InboundEventSchema, raw, 'InboundEvent');
 
     // Audience and allowed resources come from server configuration; enrollment grants nothing else.
@@ -35,28 +40,72 @@ export function createApplication(deps: IngressDependencies): ApplicationPort {
 
     // Our own findings must never re-trigger an investigation.
     if (deps.botUserId && event.message.authorId === deps.botUserId) {
-      return { accepted: false, duplicate: false, contextRevision: null, reason: 'own bot message' };
+      return { rejected: { accepted: false, duplicate: false, contextRevision: null, reason: 'own bot message' } };
     }
 
     // Sanitization is idempotent, and happens before storage or any model use.
-    const sanitized: InboundEvent = {
-      ...event,
-      message: sanitizeMessage(deps, event.message),
-      snapshot: event.snapshot.map((message) => sanitizeMessage(deps, message)),
+    return {
+      event: {
+        ...event,
+        message: sanitizeMessage(deps, event.message),
+        snapshot: event.snapshot.map((message) => sanitizeMessage(deps, message)),
+      },
     };
+  }
 
-    const accepted = await deps.store.acceptEvent(sanitized);
+  async function commit(event: InboundEvent, options: AcceptEventOptions = {}): Promise<{ receipt: IngestReceipt; enrolled: boolean }> {
+    const accepted = await deps.store.acceptEvent(event, options);
     if (!accepted.accepted) {
-      return { accepted: false, duplicate: false, contextRevision: accepted.contextRevision, reason: accepted.reason };
+      return { receipt: { accepted: false, duplicate: false, contextRevision: accepted.contextRevision, reason: accepted.reason }, enrolled: false };
     }
     if (accepted.duplicate) {
-      return { accepted: true, duplicate: true, contextRevision: accepted.contextRevision, reason: 'duplicate event' };
+      return { receipt: { accepted: true, duplicate: true, contextRevision: accepted.contextRevision, reason: 'duplicate event' }, enrolled: false };
     }
 
     // Committed first, dispatched second. A crash here leaves a pending intent for reconciliation.
     await dispatchIntent(deps, accepted.jobIntent);
 
-    return { accepted: true, duplicate: false, contextRevision: accepted.contextRevision, reason: null };
+    return { receipt: { accepted: true, duplicate: false, contextRevision: accepted.contextRevision, reason: null }, enrolled: accepted.enrolled };
+  }
+
+  async function acceptEvent(raw: InboundEvent): Promise<IngestReceipt> {
+    const prepared = prepare(raw);
+    if ('rejected' in prepared) return prepared.rejected;
+    return (await commit(prepared.event)).receipt;
+  }
+
+  async function triageEvent(raw: InboundEvent): Promise<TriageReceipt> {
+    const triage = deps.triage;
+    const prepared = prepare(raw);
+    if ('rejected' in prepared) return { triage: null, enrolled: false, receipt: prepared.rejected };
+    const { event } = prepared;
+    const skip = (reason: string, result: TriageResult | null = null): TriageReceipt => ({
+      triage: result, enrolled: false, receipt: { accepted: false, duplicate: false, contextRevision: null, reason },
+    });
+
+    // Already enrolled (for example the transport lost its subscription): ordinary acceptance, no model call.
+    const view = await deps.store.getThreadView(event.thread);
+    if (view.enrolled) return { triage: null, ...(await commit(event)) };
+
+    if (!triage) return skip('triage not configured');
+    if (event.kind !== 'message' || event.message.text.length === 0) return skip('not a new message');
+    if (!mayProposeRetentionPolicy(event.message.text)) return skip('triage prefilter');
+
+    let result: TriageResult;
+    try {
+      result = await triage.port.triage({ message: event.message, context: event.snapshot });
+    } catch (error) {
+      // Best effort: a failed classification leaves the thread unenrolled; a mention still works.
+      const code = error instanceof AccordError ? error.public.code : 'PROVIDER_ERROR';
+      deps.logger.error('triage_failed', { code });
+      return skip('triage failed');
+    }
+
+    const enroll = result.classification === 'policy_proposed' && result.confidence >= triage.minConfidence;
+    deps.logger.info('triage_classified', { classification: result.classification, confidence: result.confidence, enroll });
+    if (!enroll) return skip(`triage ${result.classification}`, result);
+
+    return { triage: result, ...(await commit(event, { enroll: true })) };
   }
 
   async function acceptAction(rawAction: OwnerAction): Promise<ActionReceipt> {
@@ -177,5 +226,6 @@ export function createApplication(deps: IngressDependencies): ApplicationPort {
         deps.logger.info('publication_receipt_ignored', { publicationId: receipt.publicationId, reason: outcome.reason });
       }
     },
+    ...(deps.triage ? { triageEvent } : {}),
   };
 }

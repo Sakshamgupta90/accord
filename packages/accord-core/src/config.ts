@@ -96,6 +96,38 @@ export function loadAccordConfig(environment: NodeJS.ProcessEnv = process.env): 
   };
 }
 
+export interface TriageConfig {
+  model: AccordConfig['model'];
+  /** A `policy_proposed` below this confidence does not enroll the thread. */
+  minConfidence: number;
+}
+
+/**
+ * Autonomous triage of messages in unenrolled threads. On by default; `ACCORD_TRIAGE=off` disables it.
+ * Uses the interpretation provider and key, with an optional cheaper `ACCORD_TRIAGE_MODEL`.
+ */
+export function loadTriageConfig(environment: NodeJS.ProcessEnv = process.env): TriageConfig | null {
+  const mode = (optional(environment, 'ACCORD_TRIAGE') ?? 'on').toLowerCase();
+  if (mode === 'off') return null;
+  if (mode !== 'on') throw new AccordError(publicError('INVALID_INPUT', 'ACCORD_TRIAGE must be on or off'));
+
+  const base = loadModelConfig(environment);
+  const minConfidence = Number(optional(environment, 'ACCORD_TRIAGE_MIN_CONFIDENCE') ?? '0.75');
+  if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) {
+    throw new AccordError(publicError('INVALID_INPUT', 'ACCORD_TRIAGE_MIN_CONFIDENCE must be between 0 and 1'));
+  }
+  const reasoningEffort = optional(environment, 'ACCORD_TRIAGE_REASONING_EFFORT');
+  return {
+    model: {
+      ...(base.provider ? { provider: base.provider } : {}),
+      apiKey: base.apiKey,
+      model: optional(environment, 'ACCORD_TRIAGE_MODEL') ?? base.model,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    },
+    minConfidence,
+  };
+}
+
 /** Optional: our own bot user id, so this app's findings never re-trigger an investigation. */
 export function botUserIdFromEnvironment(environment: NodeJS.ProcessEnv = process.env): string | null {
   return optional(environment, 'ACCORD_BOT_USER_ID');

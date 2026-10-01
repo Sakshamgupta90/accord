@@ -3,7 +3,7 @@
  */
 import type {
   ClockPort, Id, ImpactPort, ModelPort, PrivacyPort, PublisherPort, RepositoryPort, SafeLoggerPort,
-  ThreadView,
+  ThreadView, TriagePort,
 } from '@accord/contracts';
 import type { JobIntent, JobTaskType, StorePort } from '@accord/store';
 
@@ -27,9 +27,12 @@ export interface BaseDependencies {
   logger: SafeLoggerPort;
 }
 
-/** Ingress composition: accepting events and owner actions needs no model or provider access. */
+/** Ingress composition: accepting events and owner actions needs no model or provider access.
+ * The one exception is the optional triage classifier, used only for unenrolled threads. */
 export interface IngressDependencies extends BaseDependencies {
   scheduler: JobSchedulerPort;
+  /** Autonomous enrollment. Absent means Accord only enters threads it is mentioned in. */
+  triage?: { port: TriagePort; minConfidence: number };
   /** The one configured decision owner. Never inferred from message text. */
   ownerId: string;
   /** Our own bot identity, so this app's findings can never re-trigger an investigation. */

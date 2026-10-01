@@ -23,7 +23,7 @@ export interface ModelDependencies {
   logger: SafeLoggerPort;
 }
 
-interface ResponseLike {
+export interface ResponseLike {
   status?: string;
   output_text?: string;
   incomplete_details?: { reason?: string } | null;
@@ -47,7 +47,7 @@ function renderThread(messages: SlackMessage[], ownerId: string, current: Decisi
   return lines.join('\n');
 }
 
-function extract(response: ResponseLike): { text: string | null; refusal: string | null } {
+export function extract(response: ResponseLike): { text: string | null; refusal: string | null } {
   for (const item of response.output ?? []) {
     for (const part of item.content ?? []) {
       if (part.type === 'refusal' && part.refusal) return { text: null, refusal: part.refusal };
@@ -156,7 +156,7 @@ export function createOpenAIModel(config: ModelConfig, deps: ModelDependencies):
   };
 }
 
-function translate(error: unknown): AccordError {
+export function translate(error: unknown): AccordError {
   const status = (error as { status?: number }).status;
   if (status === 401 || status === 403) return new AccordError(publicError('AUTH', 'model provider rejected the credential'));
   if (status === 429) return new AccordError(publicError('RATE_LIMIT', 'model provider rate limited the request'));
