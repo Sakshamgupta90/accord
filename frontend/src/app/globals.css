@@ -1,0 +1,121 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --color-ink-950: #07070b;
+  --color-ink-900: #0c0c13;
+  --color-ink-850: #11111a;
+  --color-ink-800: #171722;
+  --color-ink-700: #22222f;
+  --color-ink-600: #2e2e3e;
+
+  --color-accent-300: #c4b5fd;
+  --color-accent-400: #a78bfa;
+  --color-accent-500: #8b5cf6;
+  --color-accent-600: #7c3aed;
+  --color-teal-glow: #2dd4bf;
+
+  --animate-marquee: marquee 40s linear infinite;
+  --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+  color-scheme: light;
+}
+
+body {
+  background-color: #fbfbfe;
+  color: #18181b;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgb(139 92 246 / 0.22);
+  color: #18181b;
+}
+
+/* Faint engineering grid behind the hero, fading out towards the edges. */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgb(24 24 40 / 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(24 24 40 / 0.06) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+.text-gradient {
+  background: linear-gradient(100deg, #6d28d9 5%, #7c3aed 40%, #0d9488 95%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Hairline border that brightens towards the top: used on cards. */
+.card-border {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid rgb(24 24 40 / 0.08);
+  box-shadow: 0 1px 2px rgb(24 24 40 / 0.04), 0 8px 24px -12px rgb(24 24 40 / 0.1);
+}
+.card-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, rgb(139 92 246 / 0.18), transparent 45%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* Fades content out at the left and right edges (logo carousel). */
+.mask-fade-x {
+  mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+}
+
+/* Dotted surface used behind product visuals. */
+.bg-dots {
+  background-image: radial-gradient(rgb(24 24 40 / 0.09) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.marquee-track:hover {
+  animation-play-state: paused;
+}
+
+/* Animated dashed connector for the architecture diagram. */
+@keyframes flow-x { to { background-position: 16px 0; } }
+@keyframes flow-y { to { background-position: 0 16px; } }
+.flow-x {
+  background-image: linear-gradient(90deg, rgb(139 92 246 / 0.55) 50%, transparent 0);
+  background-size: 8px 2px;
+  animation: flow-x 0.9s linear infinite;
+}
+.flow-y {
+  background-image: linear-gradient(180deg, rgb(139 92 246 / 0.55) 50%, transparent 0);
+  background-size: 2px 8px;
+  animation: flow-y 0.9s linear infinite;
+}
