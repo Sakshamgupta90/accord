@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 119 104" fill="none"><defs><linearGradient
+      id="paint11_linear_228_1439"
+      x1="95.859"
+      x2="94.76"
+      y1="103.206"
+      y2="31.241"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop stop-color="#41FF54"></stop>
+      <stop offset="1" stop-color="#E7FF52"></stop>
+    </linearGradient></defs><path
+    fill="url(#paint11_linear_228_1439)"
+    fill-rule="evenodd"
+    d="M35.664 42.4L59.411 1.269l58.853 101.937H.559l23.747-41.133 16.799 9.7-6.948 12.034h50.509L59.41 40.066 52.464 52.1l-16.8-9.7z"
+    clip-rule="evenodd"
+  ></path></svg>

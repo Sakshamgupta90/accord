@@ -17,6 +17,7 @@ import { attachedDocuments, downloadSlackDocuments, KnowledgeInputError, Knowled
 import { createKnowledgeTools } from './knowledge-tools.js';
 import { createSuggestTools } from './suggest-tools.js';
 import { createChannelTools } from './tools.js';
+import { traceTools, watchDecisionPipeline, type TraceHub } from './trace.js';
 import { createEmbeddingPort, SlackThreadKnowledgeService } from '@accord/store';
 
 const SLACK_TS = /^\d+\.\d+$/;
@@ -132,7 +133,7 @@ async function ingestRequestedKnowledge(
   return true;
 }
 
-export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfig) {
+export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfig, trace?: TraceHub) {
   const codeConfig = {
     githubToken: config.github.token,
     owner: config.github.owner,
@@ -154,7 +155,7 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     embedding: createEmbeddingPort(config.embedding),
     sanitize: (text) => redact(text, config.knownSecretValues),
   });
-  const tools = [
+  const baseTools = [
     ...createChannelTools(app, { teamId: config.teamId, channelId: config.channelId }),
     ...createCodeTools(codeConfig, repository),
     ...createKnowledgeTools(knowledge, slackKnowledge),
@@ -167,6 +168,56 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     }),
     ...defaultSlackTools,
   ];
+  // Tracing only observes tool calls; results are returned unchanged.
+  const tools = trace ? traceTools(trace, baseTools) : baseTools;
+
+  /**
+   * Records one accepted turn for the live dashboard trace, then runs the agent. Without a trace hub
+   * this is exactly `run()`. Tracing errors never affect the turn.
+   */
+  async function tracedTurn(
+    thread: { conversationKey: string },
+    input: { rawText: string; authorId: string; wasMention: boolean; threadRef: { teamId: string; channelId: string; rootTs: string }; contextRevision: number | null; duplicate: boolean; before: Awaited<ReturnType<typeof app.getThreadView>> | null },
+    run: () => Promise<unknown>,
+  ): Promise<void> {
+    if (!trace) {
+      await run();
+      return;
+    }
+    let id: string | null = null;
+    try {
+      const actor = input.authorId === config.ownerUserId ? 'Decision owner' : 'Team member';
+      id = trace.start({ conversationKey: thread.conversationKey, message: input.rawText, actor, channel: 'Team channel' });
+      trace.node(id, { id: 'message', lane: 'trigger', icon: 'message', title: 'Message received', subtitle: input.wasMention ? 'Accord was mentioned' : 'Reply in a followed conversation', status: 'done', summary: input.rawText, facts: [['From', actor], ['Source', 'Team channel']] });
+      trace.node(id, { id: 'accepted', lane: 'trigger', icon: 'postgresql.svg', title: 'Validated and stored', subtitle: 'Strict schema · PostgreSQL', status: 'done', summary: 'The event passed schema and audience checks and was stored durably before any work began.', facts: [['Context revision', String(input.contextRevision ?? '—')], ['Duplicate', input.duplicate ? 'yes' : 'no']] });
+      if (!input.duplicate) {
+        trace.node(id, { id: 'pipeline', lane: 'understand', icon: 'triggerdev.svg', title: 'Durable pipeline', subtitle: 'Trigger.dev · interpret', summary: 'Checking whether this message changes a tracked decision…' });
+        watchDecisionPipeline(trace, app, id, input.threadRef, input.before);
+      }
+      trace.node(id, { id: 'agent', lane: 'understand', icon: 'gemini.svg', title: 'Accord agent', subtitle: `${process.env.MODEL ?? 'Gemini'} · grounded tools only`, summary: 'Reasoning over the conversation and calling tools for evidence…' });
+    } catch {
+      // Tracing is best effort.
+    }
+    try {
+      await run();
+      if (id) {
+        trace.node(id, { id: 'agent', lane: 'understand', icon: 'gemini.svg', title: 'Accord agent', subtitle: `${process.env.MODEL ?? 'Gemini'} · grounded tools only`, status: 'done', summary: 'Answered only from tool results gathered in this turn.' });
+        trace.node(id, { id: 'reply', lane: 'respond', icon: 'send', title: 'Replied in the conversation', subtitle: 'Same thread', status: 'done', summary: 'The answer was posted back where the question was asked.' });
+      }
+    } catch (error) {
+      if (id) trace.node(id, { id: 'agent', lane: 'understand', icon: 'gemini.svg', title: 'Accord agent failed', subtitle: 'Reported, not guessed', status: 'error', summary: 'The agent run failed; Accord reported the error instead of inventing an answer.' });
+      throw error;
+    }
+  }
+
+  const viewBefore = async (threadRef: { teamId: string; channelId: string; rootTs: string }) => {
+    if (!trace) return null;
+    try {
+      return await app.getThreadView(threadRef);
+    } catch {
+      return null;
+    }
+  };
 
   const channel = createChannel({
     name: config.channelCode,
@@ -224,6 +275,8 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     // after the queue is available again.
     await enqueueSlackKnowledge(slackKnowledge, rootTs, inbound.message);
 
+    const threadRef = { teamId: config.teamId, channelId, rootTs };
+    const before = await viewBefore(threadRef);
     const receipt = await app.acceptEvent(inbound);
     if (receipt.accepted) {
       await thread.subscribe();
@@ -234,7 +287,9 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
       // Answer the mention itself (e.g. a code question) instead of waiting for a thread reply.
       // Do not pass a raw uploaded document to the model on the ingestion turn. Future questions
       // use bounded, redacted retrieval results instead.
-      if (!knowledgeUpload) await thread.runAgent();
+      if (!knowledgeUpload) {
+        await tracedTurn(thread, { rawText, authorId, wasMention: true, threadRef, contextRevision: receipt.contextRevision, duplicate: receipt.duplicate, before }, () => thread.runAgent());
+      }
     }
   });
 
@@ -317,10 +372,14 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
       return;
     }
 
+    const threadRef = { teamId: config.teamId, channelId, rootTs };
+    const before = await viewBefore(threadRef);
     const receipt = await app.acceptEvent(inbound);
     if (receipt.accepted) {
       const knowledgeUpload = !receipt.duplicate && await ingestRequestedKnowledge(knowledge, config, thread, message, { text: rawText, authorId, messageTs, rootTs });
-      if (!knowledgeUpload) await thread.runAgent();
+      if (!knowledgeUpload) {
+        await tracedTurn(thread, { rawText, authorId, wasMention: false, threadRef, contextRevision: receipt.contextRevision, duplicate: receipt.duplicate, before }, () => thread.runAgent());
+      }
     }
   });
 
