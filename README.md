@@ -123,6 +123,10 @@ ACCORD_MODEL=gemini-3-flash-preview
 ACCORD_MODEL_REASONING_EFFORT=low
 MODEL_PROVIDER=google
 MODEL=gemini-3-flash-preview
+# Optional semantic retrieval overrides. Defaults are Google gemini-embedding-001 or
+# OpenAI text-embedding-3-small according to ACCORD_MODEL_PROVIDER.
+# ACCORD_EMBEDDING_PROVIDER=google
+# ACCORD_EMBEDDING_MODEL=gemini-embedding-001
 
 # ── CopilotKit Channels
 INTELLIGENCE_API_KEY=
@@ -343,6 +347,12 @@ Run `npm run db:migrate` after updating Accord to create the knowledge and inven
 | `accord_license_inventory` | Vendor, product, SKU, seat count, cost, currency, renewal/status—never licence keys | Administrator or approved ETL | List inventory and estimate removal cost |
 
 The upload flow accepts text-based files and Word `.docx` up to 5 MiB. Unsupported formats, unreadable content, and oversized documents are rejected visibly; they are not silently indexed. Search is lexical and bounded, so it is transparent and does not require sending private documents to an embedding provider.
+
+### Slack semantic knowledge graph
+
+Accord also builds a separate **knowledge graph for Slack**. Each human message observed in the configured channel is normalized and redacted before a durable PostgreSQL queue stores it. The worker claims queue rows every minute, sends only that redacted message text to the configured embedding provider, and writes a 768-dimensional `pgvector` embedding. Graph nodes represent threads and messages; edges represent thread membership, reply chronology, and only high-confidence semantic neighbours. This enables `search_slack_thread_knowledge` to find a relevant historical discussion even when its wording differs from the question, then `inspect_slack_thread_knowledge` to show the bounded source messages and graph links.
+
+The graph is strictly scoped by Slack team and channel, is read-only from the agent, and is never used as retention-policy evidence. It covers messages observed after deployment. To queue historical channel history after migration, an operator can run `npm run semantic:backfill -- --max=1000`; it is read-only against Slack, redacts before queueing, and never sends message text to the embedding provider itself. Re-run with a larger bound if needed. Ordinary Slack runtime traffic is never blocked while an embedding is generated. Local development uses `pgvector/pgvector:0.8.6-pg17`; a production PostgreSQL instance must have the `vector` extension installed before `npm run db:migrate`.
 
 ### Model configuration
 

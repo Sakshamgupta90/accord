@@ -47,6 +47,14 @@ test('knowledge and licence facts stay in separate, scoped tables', () => {
   ]) assert.ok(sql.includes(fragment), `missing knowledge/licence schema guard: ${fragment}`);
 });
 
+test('Slack semantic graph remains separate from retention policy tables', () => {
+  const sql = readFileSync(join(MIGRATIONS, '003_slack_thread_semantic_graph.sql'), 'utf8');
+  assert.ok(sql.includes('CREATE TABLE accord_slack_thread_knowledge_nodes'));
+  assert.ok(sql.includes('CREATE TABLE accord_slack_thread_knowledge_edges'));
+  assert.equal(sql.includes('decision_versions'), false);
+  assert.equal(sql.includes('findings'), false);
+});
+
 test('database errors become bounded PublicErrors with no provider detail', () => {
   const unique = databaseError({ code: '23505', detail: 'Key (event_key)=(Ev123) already exists', message: 'duplicate' }, 'acceptEvent');
   assert.ok(unique instanceof AccordError);
