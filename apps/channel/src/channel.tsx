@@ -4,11 +4,13 @@
 import { createChannel } from '@copilotkit/channels';
 import { slack, defaultSlackTools, defaultSlackContext } from '@copilotkit/channels/slack';
 import type { ApplicationPort, OwnerAction } from '@accord/contracts';
+import { LIMITS } from '@accord/contracts';
+import { mayProposeRetentionPolicy } from '@accord/core';
 import { randomUUID } from 'node:crypto';
 import { makeChannelAgent } from './agent.js';
-import { ConfirmationCard, EnrollmentCard, KnowledgeUploadCard, StatusCard } from './components.js';
+import { ConfirmationCard, EnrollmentCard, KnowledgeUploadCard, StatusCard, TriageEnrollmentCard } from './components.js';
 import type { ChannelAppConfig } from './config.js';
-import { normalizeInboundEvent, normalizeSlackMessage } from './normalize.js';
+import { isAllowedAudience, normalizeInboundEvent, normalizeSlackMessage } from './normalize.js';
 import { createCodeTools, createRepositorySnapshot, redact } from './code-tools.js';
 import { createGitHubTools } from './github-tools.js';
 import { attachedDocuments, downloadSlackDocuments, KnowledgeInputError, KnowledgeServices, requestsKnowledgeIngestion } from './knowledge-base.js';
@@ -43,19 +45,44 @@ export function looksLikeRetentionDecision(text: string): boolean {
 function slackIdentifiers(
   thread: { conversationKey: string },
   message: unknown,
-): { authorId: string; messageTs: string; rootTs: string } | null {
+): { channelId: string; authorId: string; messageTs: string; rootTs: string } | null {
   const msg = message as {
     actor?: { id?: string } | null;
     operation?: { logicalMessageId?: string } | null;
     ref?: { id?: string } | null;
   };
-  const scope = thread.conversationKey.split('::')[1] ?? '';
+  const [channelId = '', scope = ''] = thread.conversationKey.split('::');
   const messageTs = [msg.operation?.logicalMessageId, msg.ref?.id].find((v) => typeof v === 'string' && SLACK_TS.test(v));
   const authorId = msg.actor?.id;
   if (!messageTs || !authorId) {
     return null;
   }
-  return { authorId, messageTs, rootTs: SLACK_TS.test(scope) ? scope : messageTs };
+  return { channelId, authorId, messageTs, rootTs: SLACK_TS.test(scope) ? scope : messageTs };
+}
+
+type HistoryEntry = { ts: string; authorId: string; text: string };
+
+/**
+ * Earlier human messages of a thread Accord has not joined, bounded to what one snapshot can hold,
+ * so triage and, after enrollment, interpretation read the decision in context. Capability-gated:
+ * an adapter that cannot read history yields only the inbound message.
+ */
+export async function threadHistory(
+  thread: { getMessages: () => Promise<{ ts?: string; text?: string; isBot?: boolean; user?: { id?: string } }[]> },
+  inbound: HistoryEntry,
+): Promise<{ history: HistoryEntry[]; complete: boolean }> {
+  let earlier: HistoryEntry[] = [];
+  try {
+    earlier = (await thread.getMessages())
+      .filter((m) => !m.isBot && typeof m.ts === 'string' && SLACK_TS.test(m.ts) && m.ts < inbound.ts && typeof m.user?.id === 'string')
+      .map((m) => ({ ts: m.ts!, authorId: m.user!.id!, text: (m.text ?? '').slice(0, LIMITS.messageText) }));
+  } catch {
+    earlier = [];
+  }
+  const history = [...earlier, inbound].slice(-LIMITS.snapshotMessages);
+  let total = history.reduce((sum, m) => sum + m.text.length, 0);
+  while (history.length > 1 && total > LIMITS.snapshotCharacters) total -= history.shift()!.text.length;
+  return { history, complete: history.length === earlier.length + 1 };
 }
 
 async function ingestRequestedKnowledge(
@@ -164,12 +191,12 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     if (!ids) {
       return;
     }
-    const { authorId, messageTs, rootTs } = ids;
+    const { channelId, authorId, messageTs, rootTs } = ids;
 
     const inbound = normalizeInboundEvent(
       {
         teamId: config.teamId,
-        channelId: config.channelId,
+        channelId,
         rootTs,
         messageTs,
         authorId,
@@ -197,35 +224,66 @@ export function createSlackChannel(app: ApplicationPort, config: ChannelAppConfi
     }
   });
 
-  // Handle Enrolled Messages and Autonomous Triage
+  /**
+   * Autonomous entry: a message in a thread Accord has not joined. Order matters for cost and
+   * privacy: audience, then the free keyword prefilter, then history, then the triage model.
+   */
+  async function triageUnenrolled(
+    thread: Parameters<Parameters<typeof channel.onMessage>[0]>[0]['thread'],
+    input: { channelId: string; authorId: string; messageTs: string; rootTs: string; text: string },
+  ): Promise<void> {
+    if (!app.triageEvent) return;
+    const allowed = { teamId: config.teamId, channelId: config.channelId };
+    if (!isAllowedAudience(config.teamId, input.channelId, allowed)) return;
+    if (!mayProposeRetentionPolicy(input.text)) return;
+
+    const { history, complete } = await threadHistory(thread, { ts: input.messageTs, authorId: input.authorId, text: input.text });
+    const inbound = normalizeInboundEvent(
+      {
+        teamId: config.teamId,
+        channelId: input.channelId,
+        rootTs: input.rootTs,
+        messageTs: input.messageTs,
+        authorId: input.authorId,
+        text: input.text,
+        wasMention: false,
+        history,
+        historyComplete: complete,
+      },
+      allowed,
+    );
+    if (!inbound) return;
+
+    const outcome = await app.triageEvent(inbound);
+    if (!outcome.receipt.accepted) return;
+    await thread.subscribe();
+    // Only the acceptance that enrolled the thread announces it; a racing message does not repeat it.
+    if (outcome.enrolled) await thread.post(TriageEnrollmentCard());
+  }
+
+  // Handle messages: enrolled threads follow along, others go through autonomous triage.
   channel.onMessage(async ({ thread, message }) => {
     const rawText = message.text ?? '';
     const ids = slackIdentifiers(thread, message);
     if (!ids) {
       return;
     }
-    const { authorId, messageTs, rootTs } = ids;
+    const { channelId, authorId, messageTs, rootTs } = ids;
 
-    const isSubscribed = await thread.isSubscribed();
-    if (!isSubscribed) {
-      // Autonomous Triage Step
+    if (!(await thread.isSubscribed())) {
       try {
-        const result = await app.triage?.({ message: rawText });
-        if (result && result.classification === 'policy_proposed') {
-          await thread.subscribe();
-          await thread.post(EnrollmentCard());
-        } else {
-          return; // Ignore irrelevant messages
-        }
-      } catch (e) {
-        return; // Ignore if triage fails
+        await triageUnenrolled(thread, { channelId, authorId, messageTs, rootTs, text: rawText });
+      } catch (error) {
+        // Triage is best effort and must never break the channel; a mention still enrolls.
+        console.error('accord_triage_error', error instanceof Error ? error.name : 'unknown');
       }
+      return;
     }
 
     const inbound = normalizeInboundEvent(
       {
         teamId: config.teamId,
-        channelId: config.channelId,
+        channelId,
         rootTs,
         messageTs,
         authorId,

@@ -117,6 +117,18 @@ test('an unenrolled thread ignores an ordinary message without creating state', 
   assert.equal(await database.store.getThreadRow(THREAD), null);
 });
 
+test('a triage enrollment enrolls an unenrolled thread once and keeps the event a non-mention', async () => {
+  const key = `ev-${randomUUID()}`;
+  const first = await database.store.acceptEvent(event(key, { wasMention: false }), { enroll: true });
+  assert.equal(first.accepted, true);
+  assert.equal(first.enrolled, true);
+  assert.equal((await database.store.getThreadView(THREAD)).enrolled, true);
+  assert.equal((await database.store.readEvent(key))?.wasMention, false);
+  const second = await database.store.acceptEvent(event(`ev-${randomUUID()}`, { wasMention: false, ts: '1757635200.000500' }), { enroll: true });
+  assert.equal(second.accepted, true);
+  assert.equal(second.enrolled, false);
+});
+
 test('a crash between commit and dispatch leaves a pending intent for reconciliation', async () => {
   const accepted = await database.store.acceptEvent(event(`ev-${randomUUID()}`));
   // Simulates the process dying before markJobDispatched: the intent is already durable.

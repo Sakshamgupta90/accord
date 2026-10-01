@@ -220,7 +220,11 @@ export interface ApplicationPort {
   acceptAction(action: OwnerAction): Promise<ActionReceipt>;
   getThreadView(thread: ThreadRef): Promise<ThreadView>;
   recordPublicationReceipt(receipt: PublicationReceipt): Promise<void>;
-  triage?(input: { message: string }): Promise<TriageResult>;
+  /**
+   * Autonomous entry for a message in an unenrolled thread. Absent when triage is not configured.
+   * Runs the cheap triage classifier and enrolls the thread only for a confident `policy_proposed`.
+   */
+  triageEvent?(event: InboundEvent): Promise<TriageReceipt>;
 }
 export interface RepositoryPort {
   resolveTarget(input: { repository: RepositoryId; ref: string; pullRequestUrl: string | null; pathPrefix: string }): Promise<CommitTarget>;
@@ -260,20 +264,49 @@ export interface PrivacyPort {
 }
 export interface Account { id: string; plan: Plan; organizationType: OrganizationType; universityVerified: boolean }
 export interface RetainedRecord { id: string; accountId: string; createdAt: IsoTime }
-export interface TriageResult {
-  classification: 'irrelevant' | 'exploratory' | 'policy_proposed';
-  confidenceScore: number;
-  rationale: string;
-}
-
 export interface ModelPort {
   interpret(input: { messages: SlackMessage[]; current: Decision | null; ownerId: string; contextRevision: number }): Promise<Interpretation>;
-  triage(input: { message: string }): Promise<TriageResult>;
 }
 
+export type TriageClassification = 'irrelevant' | 'exploratory' | 'policy_proposed';
+/** A cheap pre-enrollment signal only. It never becomes a decision: interpretation still decides. */
+export interface TriageResult {
+  classification: TriageClassification;
+  confidence: number; // 0..1
+  rationale: string;
+}
+/** Lightweight classifier for unenrolled messages. Message text is untrusted data. */
+export interface TriagePort {
+  triage(input: { message: SlackMessage; context: SlackMessage[] }): Promise<TriageResult>;
+}
+export interface TriageReceipt {
+  /** Null when the message was rejected before any model call (audience, own bot, heuristic). */
+  triage: TriageResult | null;
+  /** True only for the call that enrolled the thread, so the enrollment card is posted once. */
+  enrolled: boolean;
+  receipt: IngestReceipt;
+}
+
+/**
+ * Planned extension point for third-party tools (issue trackers, CI, observability).
+ * Reads run directly; every write is a proposal that the configured owner must approve
+ * before `execute` is ever called (human-in-the-loop gateway).
+ */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  access: 'read' | 'write';
+  parameters: Record<string, unknown>; // JSON Schema
+}
+export type ToolCallOutcome =
+  | { status: 'completed'; result: unknown }
+  | { status: 'approval_required'; approvalId: Id }
+  | { status: 'rejected'; reason: string };
 export interface ToolRegistryPort {
-  registerTool(name: string, schema: Record<string, unknown>, handler: (args: unknown) => Promise<unknown>): void;
-  executeTool(name: string, args: unknown): Promise<unknown>;
+  list(): ToolDefinition[];
+  call(input: { run: RunContext; name: string; args: unknown }): Promise<ToolCallOutcome>;
+  /** Owner decision on a pending write. Only the configured owner may approve. */
+  resolveApproval(input: { approvalId: Id; actorId: string; approved: boolean }): Promise<ToolCallOutcome>;
 }
 
 /** Only trusted own-bot transport events may create these receipts. */

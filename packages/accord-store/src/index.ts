@@ -29,7 +29,7 @@ export function createStore(config: StoreConfig): StorePort {
     getThreadRow: (thread) => events.getThreadRow(db, thread),
     getThreadRowById: (threadId) => events.getThreadRowById(db, threadId),
 
-    acceptEvent: (event) => events.acceptEvent(db, event),
+    acceptEvent: (event, options) => events.acceptEvent(db, event, options),
     markEventProcessed: (eventKey) => events.markEventProcessed(db, eventKey),
     readEvent: (eventKey) => events.readEvent(db, eventKey),
 

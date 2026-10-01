@@ -9,60 +9,34 @@ Currently, Accord is **reactive**—it only starts working when someone explicit
 - **Intrusiveness:** An agent that jumps into threads uninvited can be annoying. The system should start by asking for permission (e.g., *"I noticed you're discussing a retention policy change. Would you like me to investigate its impact?"*) before running the full code/database analysis.
 - **Authorization:** Only configured owners should be able to confirm a decision. If Accord auto-detects a policy change proposed by a junior engineer, it must still route it to the owner for confirmation.
 
-### Implementation Plan
-1. **Event Ingestion Update:** Update the Slack Bot configuration (in `apps/channel`) to subscribe to `message.channels` events, not just `app_mention`.
-2. **Heuristic Filter (Zero-Cost):** Implement a simple regex/keyword filter in `@accord/core` to check if a message contains keywords like "policy", "retention", "change", "delete", "records", or "approve". If no keywords are found, drop the event.
-3. **LLM Triage (Low-Cost):** Send messages that pass the heuristic filter to a small, fast model (e.g., `gemini-3.1-flash-lite`) with a specialized triage prompt.
-4. **Proactive Enrollment:** If the triage model determines a decision is being made, Accord automatically enrolls the thread, creates a `candidate` decision in PostgreSQL, and posts a native CopilotKit card to the thread offering to investigate.
+### Implementation (as built)
+Pipeline for a message in a thread Accord has not joined, cheapest check first:
+
+1. **Transport filters (free):** the Slack adapter already drops bot messages and edits. `message.channels` is already in `apps/channel/slack-app-manifest.json`.
+2. **Audience (free):** the real channel comes from the conversation key (`<channel>::<threadTs>`). Messages outside `ACCORD_SLACK_CHANNEL_ID` never reach a model. Mentions use the same check.
+3. **Keyword prefilter (free):** `mayProposeRetentionPolicy()` in `@accord/core` is tuned for recall over retention words and durations. It drops questions about the current state and very long pastes.
+4. **Thread history (one Slack call):** `thread.getMessages()` supplies earlier human messages, bounded to one snapshot. This lets "ok, 30 days it is" be read in context. The same history becomes the enrollment snapshot, so interpretation also sees it.
+5. **Triage model (one small call):** `ApplicationPort.triageEvent()` validates the event, applies the audience and own-bot checks, sanitizes it and calls the `TriagePort`. The output is schema-validated (`TriageResultSchema`). Failures are logged and skipped; they never break the channel.
+6. **Enrollment:** only `policy_proposed` at or above `ACCORD_TRIAGE_MIN_CONFIDENCE` (default 0.75) enrolls. The store gets an explicit `{ enroll: true }`, and the persisted event keeps `wasMention: false`. The normal context job then runs interpretation. Owner confirmation is unchanged, so triage never creates or confirms a decision itself.
+7. **Announcement:** the acceptance that enrolled the thread posts the "Accord joined this thread" card once. A racing second message does not repeat it.
+
+Configuration (`.env.example`): `ACCORD_TRIAGE=on|off` (default on), `ACCORD_TRIAGE_MODEL` (defaults to `ACCORD_MODEL`; set it to a cheaper model to save cost), `ACCORD_TRIAGE_MIN_CONFIDENCE` and `ACCORD_TRIAGE_REASONING_EFFORT`.
 
 ---
 
-## 2. System Prompt Design for the Autonomous Agent
+## 2. Triage Prompt
 
-Here is a system prompt designed for the LLM that will ambiently monitor Slack and decide whether to take action. This prompt focuses on precision to avoid false positives.
+The production prompt is `TRIAGE_INSTRUCTIONS` in `packages/accord-core/src/model/triage.ts`. It is enforced with strict JSON-schema structured output:
 
-```text
-You are Accord, an autonomous engineering policy agent. You monitor team discussions to identify when technical policies, data retention rules, or architecture decisions are being made or changed.
-
-Your goal is to extract proposed policy changes and decide if an investigation should be triggered.
-
-### RULES:
-1. PASSIVE OBSERVATION: You are reading a live Slack channel. Most conversations are irrelevant. Only trigger an action if there is a CLEAR intent to change or establish a software policy (e.g., "We need to delete free accounts after 30 days").
-2. NO ASSUMPTIONS: Do not invent policies. If a conversation is just exploring ideas, mark it as `exploratory`. If a concrete rule is stated, mark it as `policy_proposed`.
-3. SCOPE EXTRACTION: If a policy is proposed, extract the affected entities (e.g., User, Account), conditions (e.g., plan = free), and actions (e.g., delete, retain).
-4. OUTPUT FORMAT: You must strictly output valid JSON matching the following schema.
-
-### JSON SCHEMA:
-{
-  "classification": "irrelevant" | "exploratory" | "policy_proposed",
-  "confidence_score": 0.0 to 1.0,
-  "rationale": "Brief explanation of why you classified it this way.",
-  "extracted_policy": {
-    "target": "What is being affected?",
-    "rule": "What is the new rule or timeframe?",
-    "applies_to": "Specific conditions (e.g., verified users only)"
-  } // Only include if classification is 'policy_proposed'
-}
-
-### EXAMPLES:
-Message: "Hey, are we still getting pizza for lunch?"
-Output: {"classification": "irrelevant", "confidence_score": 0.99, "rationale": "Lunch discussion, not a software policy."}
-
-Message: "I think we might want to clean up old logs at some point, they are getting huge."
-Output: {"classification": "exploratory", "confidence_score": 0.85, "rationale": "General idea discussed, no concrete policy proposed."}
-
-Message: "Let's change the retention for enterprise audit logs to 365 days starting tomorrow."
-Output: {
-  "classification": "policy_proposed",
-  "confidence_score": 0.95,
-  "rationale": "Clear directive to change retention policy for a specific tier.",
-  "extracted_policy": {
-    "target": "Audit logs",
-    "rule": "Retain for 365 days",
-    "applies_to": "Enterprise tier"
-  }
-}
+```json
+{ "classification": "irrelevant" | "exploratory" | "policy_proposed", "confidence": 0.0-1.0, "rationale": "one sentence" }
 ```
+
+Design choices:
+- **Classification only, no extraction.** The interpretation model already extracts a validated `PolicyIntent` from the whole thread after enrollment. Extracting it twice would cost output tokens and could disagree.
+- **Context in the user turn, labelled untrusted.** Earlier messages and the TARGET message are rendered as JSON lines and never spliced into the instructions.
+- **Bias to `exploratory` when unsure.** Together with the confidence floor, this keeps false-positive interruptions rare.
+- **Small output budget** (1,024 tokens, leaving headroom for thinking models), a 15s timeout and no SDK retries. Triage is best effort: a mention always still works.
 
 ---
 
@@ -88,7 +62,7 @@ Right now, Accord talks to PostgreSQL (for its own state) and ClickHouse (for da
    - *Why:* For infrastructure policies (e.g., "S3 buckets must not be public").
 
 ### Implementation Plan
-1. **Tool Registry Plugin Architecture:** Refactor `@accord/core` to support a plugin model. Instead of directly importing `ImpactPort` (ClickHouse), create a generic `ToolRegistry`.
+1. **Tool Registry Plugin Architecture:** `ToolRegistryPort` in `@accord/contracts` is the contract for this (not yet implemented). Each `ToolDefinition` declares `access: 'read' | 'write'`. `call()` returns `completed` for reads and `approval_required` for writes, and only `resolveApproval()` by the configured owner executes a write. Keep `ImpactPort` and `RepositoryPort` as typed ports and add new integrations beside them.
 2. **Standardize Tool Schemas:** Define strict Zod schemas for the inputs and outputs of new external APIs. Pass these definitions to the LLM via its function-calling API.
 3. **Implement Linear/Jira Port:** Create a new package (e.g., `packages/issue-tracker`) that implements an `IssueTrackerPort` (similar to how `RepositoryPort` handles GitHub).
 4. **Human-in-the-Loop Gateway:** For any external write action (like `create_ticket`), intercept the LLM's function call in the Trigger.dev worker, suspend the job, and send an interactive CopilotKit message to Slack asking the owner to click "Approve". Once clicked, resume the Trigger.dev job and execute the external API call.

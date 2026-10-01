@@ -29,6 +29,20 @@ export function EnrollmentCard() {
   );
 }
 
+/** Posted once when triage, not a mention, enrolled the thread. Says why Accord joined uninvited. */
+export function TriageEnrollmentCard() {
+  return (
+    <Message accent="#2EB67D">
+      <Header>Accord joined this thread</Header>
+      <Section>
+        <Markdown>
+          This looks like a data retention decision, so Accord is following along. Only the decision owner can confirm it; I will then compare it with the implementation and stored-record impact. Mention me with a question any time.
+        </Markdown>
+      </Section>
+    </Message>
+  );
+}
+
 export function KnowledgeUploadCard({ accepted, skipped }: { accepted: string[]; skipped: string[] }) {
   return (
     <Message accent={accepted.length > 0 ? '#36C5F0' : '#E01E5A'}>

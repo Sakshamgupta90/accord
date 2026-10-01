@@ -6,7 +6,7 @@ import type { InboundEvent, ThreadRef, ThreadView } from '@accord/contracts';
 import type { Database, Queryable } from './client.js';
 import { toDecision, toFinding, toInboundEvent, toJobIntent, toThreadRow } from './rows.js';
 import type { RawDecision, RawJobIntent, RawThread } from './rows.js';
-import type { AcceptedEvent, ThreadRow } from './types.js';
+import type { AcceptedEvent, AcceptEventOptions, ThreadRow } from './types.js';
 
 const THREAD_COLUMNS = 'id, team_id, channel_id, root_ts, enrolled, context_revision, active_decision_id, active_version, finding_message_ts';
 
@@ -74,11 +74,11 @@ export async function getThreadView(db: Queryable, thread: ThreadRef): Promise<T
 
 /**
  * Durable acceptance in one transaction:
- * dedupe by event key, enroll on a verified mention, increment the context revision,
- * persist the sanitized snapshot, create exactly one context job intent, and fence older work.
- * Dispatch to Trigger.dev happens after the commit, never inside it.
+ * dedupe by event key, enroll on a verified mention (or an explicit triage enrollment),
+ * increment the context revision, persist the sanitized snapshot, create exactly one context
+ * job intent, and fence older work. Dispatch to Trigger.dev happens after the commit, never inside it.
  */
-export async function acceptEvent(db: Database, event: InboundEvent): Promise<AcceptedEvent> {
+export async function acceptEvent(db: Database, event: InboundEvent, options: AcceptEventOptions = {}): Promise<AcceptedEvent> {
   return db.transaction(async (tx) => {
     const existing = await tx.query<RawThread>(
       `SELECT ${THREAD_COLUMNS} FROM threads
@@ -86,13 +86,15 @@ export async function acceptEvent(db: Database, event: InboundEvent): Promise<Ac
       [event.thread.teamId, event.thread.channelId, event.thread.rootTs],
     );
     let row = existing.rows[0] ? toThreadRow(existing.rows[0]) : null;
+    let enrolled = false;
 
     if (!row || !row.enrolled) {
-      // An unenrolled thread is only entered through a verified mention. Ordinary messages
-      // in unenrolled threads are ignored, and reading them creates no state.
-      if (!event.wasMention) {
-        return { accepted: false, duplicate: false, reason: 'thread not enrolled', threadId: row?.id ?? null, contextRevision: row?.contextRevision ?? null, jobIntent: null };
+      // An unenrolled thread is only entered through a verified mention or an application-level
+      // triage decision. Other messages in unenrolled threads are ignored and create no state.
+      if (!event.wasMention && !options.enroll) {
+        return { accepted: false, duplicate: false, enrolled: false, reason: 'thread not enrolled', threadId: row?.id ?? null, contextRevision: row?.contextRevision ?? null, jobIntent: null };
       }
+      enrolled = true;
       if (!row) {
         const inserted = await tx.query<RawThread>(
           `INSERT INTO threads (id, team_id, channel_id, root_ts, enrolled)
@@ -119,7 +121,7 @@ export async function acceptEvent(db: Database, event: InboundEvent): Promise<Ac
       [event.eventKey, row.id, JSON.stringify(event), nextRevision],
     );
     if (insertedEvent.rows.length === 0) {
-      return { accepted: true, duplicate: true, reason: 'duplicate event', threadId: row.id, contextRevision: row.contextRevision, jobIntent: null };
+      return { accepted: true, duplicate: true, enrolled: false, reason: 'duplicate event', threadId: row.id, contextRevision: row.contextRevision, jobIntent: null };
     }
 
     await tx.query('UPDATE threads SET context_revision = $2, updated_at = now() WHERE id = $1', [row.id, nextRevision]);
@@ -149,6 +151,7 @@ export async function acceptEvent(db: Database, event: InboundEvent): Promise<Ac
     return {
       accepted: true,
       duplicate: false,
+      enrolled,
       reason: null,
       threadId: row.id,
       contextRevision: nextRevision,
