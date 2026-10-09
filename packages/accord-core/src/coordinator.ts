@@ -111,6 +111,11 @@ export async function processContext(deps: InvestigationDependencies, payload: P
 
   const event = await deps.store.readEvent(payload.eventKey);
   if (!event) return;
+  // Do not revive automatic triage work queued before the switch to mention-only operation.
+  if (!event.wasMention) {
+    await deps.store.markEventProcessed(payload.eventKey);
+    return;
+  }
 
   const current = await deps.store.getActiveDecision(thread.id);
   const outcome = await interpret(

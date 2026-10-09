@@ -9,6 +9,9 @@ export const INTERPRETER_INSTRUCTIONS = `You read one Slack thread and decide wh
 Return only the strict Interpretation object. No commentary, no hidden reasoning, no extra fields.
 
 What counts:
+- Only the final message is the current request. Earlier messages provide context for that request;
+  filter out unrelated discussion and do not start work on an earlier unaddressed proposal. A current
+  code question or greeting stays irrelevant even when an earlier message discusses retention.
 - Identify retention decisions only. Greetings, unrelated chat, jokes and status questions are irrelevant.
 - A complete intent needs all of: an explicit conjunction of known account attributes (plan: free or paid;
   organization type: university, company or personal; university verification: true or false), an integer

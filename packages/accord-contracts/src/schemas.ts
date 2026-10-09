@@ -14,7 +14,7 @@ import type {
 import { CONTRACT_VERSION } from './types.js';
 
 export const LIMITS = {
-  snapshotMessages: 50,
+  snapshotMessages: 51, // Up to 50 previous messages plus the explicit triggering message.
   snapshotCharacters: 30_000,
   messageText: 30_000,
   evidenceExcerpt: 1_500,

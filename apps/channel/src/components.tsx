@@ -22,7 +22,7 @@ export function EnrollmentCard() {
       <Header>Accord Active</Header>
       <Section>
         <Markdown>
-          Accord is following this thread. I will compare confirmed retention decisions with the implementation and stored-record impact.
+          Accord is checking this request against the implementation and stored-record impact. Mention @Accord again for a follow-up; ordinary replies do not trigger work.
         </Markdown>
       </Section>
     </Message>

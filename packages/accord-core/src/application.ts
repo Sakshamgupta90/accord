@@ -38,6 +38,11 @@ export function createApplication(deps: IngressDependencies): ApplicationPort {
     // Audience and allowed resources come from server configuration; enrollment grants nothing else.
     deps.privacy.assertAudience({ thread: event.thread, repository, datasetVersion: deps.dataset.version });
 
+    // Enrollment is persistence, not permission to act on subsequent unmentioned messages.
+    if (!event.wasMention) {
+      return { rejected: { accepted: false, duplicate: false, contextRevision: null, reason: 'explicit mention required' } };
+    }
+
     // Our own findings must never re-trigger an investigation.
     if (deps.botUserId && event.message.authorId === deps.botUserId) {
       return { rejected: { accepted: false, duplicate: false, contextRevision: null, reason: 'own bot message' } };

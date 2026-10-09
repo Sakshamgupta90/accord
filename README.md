@@ -1,6 +1,8 @@
 # Accord
 
-Accord keeps a Slack policy decision connected to the code and synthetic data it changes. A team enrolls one thread by mentioning Accord; the configured owner confirms a narrowly supported retention decision; Accord investigates the fixed GitHub commit and calculates its current impact from a read-only ClickHouse view. Findings remain tied to the decision version and context revision until a proposed fix is verified at its PR head commit.
+Accord keeps a Slack policy decision connected to the code and synthetic data it changes. Mention `@Accord` for each request, including follow-ups; ordinary messages do not trigger replies, triage, or background investigations. The configured owner can request a narrowly supported retention investigation against a fixed GitHub commit and current impact from a read-only ClickHouse view. Findings remain tied to the requested decision version and context revision.
+
+On each mention, Accord reads at most the previous 50 messages from that thread (or the channel for a top-level mention), then filters bot/system messages, empty text and duplicates. The current request is separate from those 50 messages. Both the answering agent and decision interpreter receive the same chronological, redacted context, capped at 30,000 characters including the request. They use only discussion relevant to that request. Missing or truncated history is marked incomplete. Accord does not continuously learn from ambient chat or search older Slack history behind this window.
 
 In the same Slack thread, Accord can also answer questions about the configured GitHub repository: it reads and searches the code, reads commits, issues and pull requests, and, when asked how to make a change, suggests up to three approaches ranked for this project. All GitHub access is read-only.
 
@@ -260,11 +262,11 @@ To stop: `Ctrl+C` in both tabs, then optionally `npm run dev:down` (the data vol
 
 ## What to ask Accord in Slack
 
-Start with a new top-level message that @mentions the bot; follow up with plain replies **inside that thread**.
+Mention `@Accord` whenever you want an answer, including follow-ups **inside the thread**. Replies without a mention stay silent.
 
 **Retention decisions (the core workflow)**
 - `@Accord Confirmed: free accounts with verified university status now get 90 days retention for records we already store, effective immediately`
-- In the thread: `What's the current status of this decision?` · `Let's mark this as tentative until legal signs off.` · `Update: make it 60 days instead of 90.` · `We're withdrawing this decision.`
+- In the thread: `@Accord What's the current status of this decision?` · `@Accord Let's mark this as tentative until legal signs off.` · `@Accord Update: make it 60 days instead of 90.` · `@Accord We're withdrawing this decision.`
 - `@Accord Should we maybe give paid company accounts 45 days retention?` (a proposal, not a confirmation)
 - `@Accord Let's keep student data longer.` (too vague, so Accord asks a clarifying question)
 
@@ -348,11 +350,9 @@ Run `npm run db:migrate` after updating Accord to create the knowledge and inven
 
 The upload flow accepts text-based files and Word `.docx` up to 5 MiB. Unsupported formats, unreadable content, and oversized documents are rejected visibly; they are not silently indexed. Search is lexical and bounded, so it is transparent and does not require sending private documents to an embedding provider.
 
-### Slack semantic knowledge graph
+### Slack conversation context
 
-Accord also builds a separate **knowledge graph for Slack**. Each human message observed in the configured channel is normalized and redacted before a durable PostgreSQL queue stores it. The worker claims queue rows every minute, sends only that redacted message text to the configured embedding provider, and writes a 768-dimensional `pgvector` embedding. Graph nodes represent threads and messages; edges represent thread membership, reply chronology, and only high-confidence semantic neighbours. This enables `search_slack_thread_knowledge` to find a relevant historical discussion even when its wording differs from the question, then `inspect_slack_thread_knowledge` to show the bounded source messages and graph links.
-
-The graph is strictly scoped by Slack team and channel, is read-only from the agent, and is never used as retention-policy evidence. It covers messages observed after deployment. To queue historical channel history after migration, an operator can run `npm run semantic:backfill -- --max=1000`; it is read-only against Slack, redacts before queueing, and never sends message text to the embedding provider itself. Re-run with a larger bound if needed. Ordinary Slack runtime traffic is never blocked while an embedding is generated. Local development uses `pgvector/pgvector:0.8.6-pg17`; a production PostgreSQL instance must have the `vector` extension installed before `npm run db:migrate`.
+Slack context is retrieved on demand when Accord is mentioned. The bridge does not enqueue ambient messages for semantic indexing, and the Slack agent does not expose the historical Slack graph search tools. Existing graph data and the operator backfill command remain available separately; they are not part of the mention-only answer path. Uploaded developer documentation and licence inventory tools are unchanged.
 
 ### Model configuration
 
